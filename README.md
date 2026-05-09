@@ -56,7 +56,7 @@ GROUP BY a.id, b.name, c.value
 | F-06 | **Multi-Query Batch** | `%%analyze_batch` | Shared scans → cache; identical filters → CTE; repeated CTEs → temp view |
 | F-07 | **Schema & Stats Health** | `%analyze` (auto) | Missing table/column statistics; copy-ready `ANALYZE TABLE` commands |
 | F-08 | **Streaming Analyser** | `%analyze` (auto) | Missing watermark, late data gaps, state store growth risk |
-| F-09 | **History Tracker** | `%analyze` (auto) | Query signature tracking — regression detection across runs |
+| F-09 | **History Tracker** | `%analyze` (auto) + `@monitor_performance` decorator | Query signature tracking across runs; regression detection; `@monitor_performance` for arbitrary Python/Spark functions |
 | F-10 | **Natural Language Summary** | `%analyze` (auto) | Plain-English narrative: what it does, biggest problem, fix sentence |
 | F-12 | **Cluster Advisor** | `%analyze` (auto) | Photon/SQL Warehouse/Jobs cluster rec, executor memory sizing |
 | F-14 | **HTML Export** | `%analyze --export <path>` | Export the full diagnostic card as a self-contained HTML file |
@@ -157,6 +157,7 @@ spark_query_analyzer/
 ├── cost_estimator.py         # F-05: DBU cost estimation + badge renderer
 ├── cross_query_optimiser.py  # F-06: multi-query batch analysis
 ├── history_tracker.py         # F-09: query signature tracking + regression
+├── performance_monitor.py      # F-09 extension: @monitor_performance decorator
 └── system_info.py             # SparkConf / AQE config helpers
 ```
 

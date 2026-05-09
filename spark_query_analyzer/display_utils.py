@@ -73,6 +73,31 @@ _css = """
 """
 
 
+def error_card(message: str, sql: str = "") -> str:
+    """Render a styled error message in the same card format as format_diagnostics.
+
+
+    Used when EXPLAIN FORMATTED fails (e.g. SQL syntax error) so the user sees
+    a clean HTML card instead of a raw Python traceback.
+    """
+    sql_preview = ""
+    if sql:
+        preview = sql.replace("\n", " ")[:80]
+        sql_preview = f'<div style="font-family:monospace;font-size:12px;color:#64748b;margin-top:6px;white-space:pre-wrap;word-break:break-all;">SQL: {preview}{"..." if len(sql) > 80 else ""}</div>'
+    return (
+        '<div class="sqa">'
+        '<div class="sqa-header">'
+        '<span>Spark Query Analyzer</span>'
+        '<span style="background:#dc2626;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;">ERROR</span>'
+        '</div>'
+        '<div class="sqa-body">'
+        f'<div style="padding:14px 16px;font-size:13px;color:#dc2626;font-weight:500;">&#x26A0; {message}</div>'
+        f'{sql_preview}'
+        '</div>'
+        '</div>'
+    )
+
+
 def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "", narrative_result=None, cluster_recommendations: list = None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts

@@ -1,0 +1,27 @@
+[project]
+name = "spark-query-analyzer"
+version = "0.1.0"
+description = "Databricks notebook tool that turns Spark execution plans into plain-English diagnoses with copy-ready fixes"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Edd Almond", email = "edd@eddalmond.com"}]
+keywords = ["spark", "databricks", "performance", "sql", "notebook"]
+classifiers = ["License :: OSI Approved :: MIT License"]
+
+[project.urls]
+Homepage = "https://github.com/eddalmond/spark-query-analyzer"
+Repository = "https://github.com/eddalmond/spark-query-analyzer"
+Issues = "https://github.com/eddalmond/spark-query-analyzer/issues"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]  # line too long — handled by formatter
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports OK in __init__
+
+[tool.ruff.format]
+quote-style = "single"

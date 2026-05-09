@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 from spark_query_analyzer.narrative_explainer import NarrativeExplainer, format_narrative_banner, NarrativeResult
+from spark_query_analyzer.display_utils import format_diagnostics, error_card
 
 
 @dataclass
@@ -48,7 +49,7 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
         explained = spark.sql(f"EXPLAIN FORMATTED {sql}")
         plan_text = "\n".join(row[0] for row in explained.collect())
     except Exception as e:
-        raise RuntimeError(f"EXPLAIN FORMATTED failed: {e}")
+        return error_card(str(e), sql)
 
     result = parse_plan(plan_text, sql)
     tables = _extract_table_names(sql)

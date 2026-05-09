@@ -51,49 +51,34 @@ The card is identical whether viewed in a notebook or exported as a standalone H
 
 ## 🚀 Quick Start
 
-### Option A — Databricks Repos (recommended for dev)
-```python
-%sh
-pip install git+https://github.com/eddalmond/spark-query-analyzer.git --quiet
+### Generate the single-file deployment (once)
+```bash
+git clone https://github.com/eddalmond/spark-query-analyzer.git
+cd spark-query-analyzer
+python3 scripts/build_single_file.py
 ```
-```python
-from spark_query_analyzer import register_analyze_magic
-from spark_query_analyzer.magic import register_analyze_batch_magic
-register_analyze_magic()
-register_analyze_batch_magic()
-```
+This produces `spark_query_analyzer_single.py` — all 17 modules in one file.
 
-### Option B — Clone to DBFS
+### Add it to your NHS repo
+Commit `spark_query_analyzer_single.py` to your notebook repository (it's a plain `.py` file — no `.ipynb`).  This is the artifact your clinical/IM&T approval covers.
+
+### Use it in any notebook
 ```python
-%sh
-git clone https://github.com/eddalmond/spark-query-analyzer.git /tmp/spark_query_analyzer
-```
-```python
-import sys
-sys.path.insert(0, "/tmp/spark_query_analyzer")
-from spark_query_analyzer import register_analyze_magic
-from spark_query_analyzer.magic import register_analyze_batch_magic
-register_analyze_magic()
-register_analyze_batch_magic()
+# In your notebook setup cell (run once per session):
+exec(open("spark_query_analyzer_single.py").read())
+
+# Then in any SQL cell:
+%analyze
+SELECT ...
 ```
 
-### Option C — Community Edition (no git)
-Upload `spark_query_analyzer/` as a library or copy it to a workspace directory, then import as above.
+After that cell completes, `%analyze` and `%%analyze_batch` are registered for the rest of the session.  No git, no pip, no library upload required.
 
-### Option D — Paste-and-go (fully offline, locked-down prod) ⭐
-
-If you can't use git, pip, or library upload — the repo ships `spark_query_analyzer_single.py`
-(~210KB, all 17 modules inlined). Copy it into a notebook cell, run it once, done. Nothing else needed.
-
-```python
-# Copy the entire contents of spark_query_analyzer_single.py into this cell and run it
-# OR if the file is already on DBFS:
-exec(open("/tmp/spark_query_analyzer_single.py").read())
+### Regenerate after updates
+```bash
+python3 scripts/build_single_file.py
 ```
-
-After that cell completes, `%analyze` and `%%analyze_batch` are registered for the rest of the session.
-
-> **To regenerate** after pulling updates: run `python3 scripts/build_single_file.py` locally.
+Commit the updated `spark_query_analyzer_single.py` to your repo.
 
 ---
 

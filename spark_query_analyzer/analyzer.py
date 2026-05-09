@@ -16,6 +16,7 @@ class Finding:
     suggestion: str # actionable fix
     table: Optional[str] = None
     detail: Optional[str] = None
+    config_snippet: Optional[str] = None  # copy-ready Spark conf set() block
 
 
 @dataclass
@@ -49,18 +50,19 @@ def run_analysis(spark, sql: str, line: str = "") -> str:
     tables = _extract_table_names(sql)
     plan_lines = plan_text.split("\n")
 
-    # --- AQE config diagnostics ---
-    from spark_query_analyzer.system_info import get_aqe_config, build_aqe_diagnostics
-    aqe = get_aqe_config(spark)
-    for item in build_aqe_diagnostics(aqe):
+    # --- AQE config diagnostics (F-02: plan-aware AQE recommendations) ---
+    from spark_query_analyzer.aqe_checker import read_aqe_config, build_recommendations
+    aqe_cfg = read_aqe_config(spark)
+    for f in build_recommendations(aqe_cfg, plan_text, sql):
         result.findings.append(Finding(
-            severity=item["severity"],
-            code=item["code"],
-            message=item["message"],
+            severity=f.severity,
+            code=f.code,
+            message=f.message,
             node=None,
-            suggestion=item.get("suggestion", ""),
+            suggestion=f.suggestion,
             table=None,
-            detail=item.get("detail"),
+            detail=f.detail,
+            config_snippet=f.config_snippet,
         ))
 
     # --- File size / small file diagnostics ---

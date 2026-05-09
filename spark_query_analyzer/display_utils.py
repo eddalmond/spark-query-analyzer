@@ -77,6 +77,13 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None) -> st
                 f'<div class="sqa-suggestion"><strong>\u2192 Fix:</strong> {f.suggestion}</div>'
                 if f.suggestion else ""
             )
+            if f.config_snippet:
+                escaped_snippet = f.config_snippet.replace("\n", "<br>").replace(" ", "&nbsp;")
+                suggestion_html += (
+                    f'<div class="sqa-suggestion" style="background:#1e293b;color:#f8fafc;margin-top:4px;font-size:11px;">'
+                    f'<strong style="color:#60a5fa;">Config:</strong><br>'
+                    f'<code style="font-size:10px;">{escaped_snippet}</code></div>'
+                )
             findings_html += (
                 f'<div class="sqa-finding" style="border-left-color:{border}">'
                 f'<div class="sqa-severity" style="color:{border}">{sym} {label}'

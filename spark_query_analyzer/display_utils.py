@@ -48,7 +48,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -93,6 +93,26 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None) -> st
                 f'</div>'
             )
 
+    # Build Python Patterns section (F-04)
+    python_html = ""
+    if python_findings:
+        py_findings_html = ""
+        for pf in python_findings:
+            border = SEVERITY_BORDER.get(pf.severity, "#ccc")
+            sym = SEVERITY_SYMBOL.get(pf.severity, "⚪")
+            label = SEVERITY_LABEL.get(pf.severity, pf.severity.upper())
+            line_html = f'<div class="sqa-node">Line: {pf.line}</div>' if pf.line else ""
+            suggestion_html = f'<div class="sqa-suggestion"><strong>\u2192 Fix:</strong> {pf.suggestion}</div>' if pf.suggestion else ""
+            py_findings_html += (
+                f'<div class="sqa-finding" style="border-left-color:{border}">'
+                f'<div class="sqa-severity" style="color:{border}">{sym} {label}<span class="sqa-code">{pf.code}</span></div>'
+                f'<div class="sqa-message">{pf.message}</div>'
+                f'{line_html}{suggestion_html}'
+                f'</div>'
+            )
+        python_header = '<div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#0f172a;">&#x1F40D; Python Patterns</div>'
+        python_html = '<div style="border-top:2px solid #e2e8f0;margin-top:4px;">' + python_header + py_findings_html + '</div>'
+
     # Build Delta Storage section (F-01)
     delta_html = ""
     if delta_results:
@@ -130,7 +150,7 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None) -> st
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{findings_html}{delta_html}</div>'
+        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}</div>'
         f'{footer_html}</div>'
     )
 

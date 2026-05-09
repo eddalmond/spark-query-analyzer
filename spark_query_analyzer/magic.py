@@ -3,21 +3,24 @@ IPython cell magic registration for %analyze.
 """
 
 from IPython.core.magic import register_cell_magic
-from spark_query_analyzer.analyzer import run_analysis
+from spark_query_analyzer.analyzer import run_analysis, Finding
 
 
 def register_analyze_magic():
     """Call once per notebook session to register the %analyze magic."""
     @register_cell_magic
     def analyze(line, cell):
-        """Cell magic: put %analyze on the first line, SQL query below."""
+        """Cell magic: put %analyze on the first line, SQL query below.
+        Also scans the cell for Python anti-patterns (F-04).
+        """
         spark = _get_spark()
         if spark is None:
             raise RuntimeError(
                 "Could not acquire SparkSession. "
                 "Make sure this notebook is attached to a cluster with Spark >= 3.3."
             )
-        return run_analysis(spark, cell.strip(), line.strip())
+        # The SQL is the entire cell body; pass full cell for Python scanning
+        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell)
 
 
 def _get_spark():

@@ -37,7 +37,7 @@ class AnalysisResult:
         return {s: sum(1 for f in self.findings if f.severity == s) for s in ["critical", "high", "medium", "info"]}
 
 
-def run_analysis(spark, sql: str, line: str = "") -> str:
+def run_analysis(spark, sql: str, line: str = "", full_cell: str = "") -> str:
     """Run EXPLAIN FORMATTED on the query, parse the plan, return HTML diagnostics."""
     # Run EXPLAIN FORMATTED
     try:
@@ -114,9 +114,25 @@ def run_analysis(spark, sql: str, line: str = "") -> str:
                     detail=df.detail,
                 ))
 
+    # --- F-04: Python Anti-Pattern Scanner ---
+    if full_cell:
+        from spark_query_analyzer.python_scanner import scan_cell
+        py_findings = scan_cell(full_cell)
+        result.python_findings = py_findings
+        for pf in py_findings:
+            result.findings.append(Finding(
+                severity=pf.severity,
+                code=pf.code,
+                message=pf.message,
+                node=str(pf.line) if pf.line else None,
+                suggestion=pf.suggestion,
+                table=None,
+                detail=pf.detail,
+            ))
+
     # Display via display_utils
     from spark_query_analyzer.display_utils import format_diagnostics
-    html = format_diagnostics(result, delta_results)
+    html = format_diagnostics(result, delta_results, getattr(result, 'python_findings', None))
     from IPython.display import HTML, display
     display(HTML(html))
     return ""

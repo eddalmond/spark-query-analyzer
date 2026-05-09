@@ -236,24 +236,30 @@ Features are grouped into four phases. Each includes: **what it is**, **why it m
 
 #### F-09 · Query History Performance Tracker ✅ Zero-dep notebook
 
-**What:** Persist query signatures and their diagnostic findings to a Delta table in the user's workspace, enabling trend tracking — "did this query get worse after the schema change last Tuesday?"
+**What:** Persist query signatures and their diagnostic findings to a Delta table in the user's workspace, enabling trend tracking — "did this query get worse after the schema change last Tuesday?"  Also includes a `@monitor_performance` decorator for tracking arbitrary Python/Spark functions in the same history table.
 
-**Why it matters:** Unravel's core commercial value is longitudinal performance visibility. This adds a free, notebook-native equivalent. It also unlocks the ability to detect performance regressions in CI/CD pipelines (see F-11).
+**Why it matters:** Unravel's core commercial value is longitudinal performance visibility. This adds a free, notebook-native equivalent. It also unlocks the ability to detect performance regressions in CI/CD pipelines (see F-13).
 
 **Implementation:**
 
-1. Add a `HistoryTracker` in `history_tracker.py` that is called at the end of every `%analyze` run.
-2. Compute a **query signature** (stable hash): parse the SQL AST, strip literals and aliases, and SHA-256 hash the normalised structure. This groups `WHERE date = '2024-01-01'` and `WHERE date = '2025-01-01'` as the same query shape.
-3. Write a record to `_spark_query_analyzer.query_history` Delta table (auto-created on first run):
+1. `history_tracker.py` — `HistoryTracker` called at the end of every `%analyze` run.
+2. **Query signature:** stable SHA-256 hash of normalised SQL (strip literals, aliases; collapse whitespace). Groups `WHERE date = '2024-01-01'` and `WHERE date = '2025-01-01'` as the same shape.
+3. `_spark_query_analyzer.query_history` Delta table (auto-created on first run):
    ```
-   schema: query_signature STRING, run_timestamp TIMESTAMP, 
-           query_text STRING, severity_counts MAP<STRING,INT>,
-           estimated_dbu_cost FLOAT, cluster_id STRING,
-           findings_json STRING, duration_ms LONG
+   query_signature STRING, run_timestamp TIMESTAMP,
+   query_text STRING, severity_critical/HIGH/MEDIUM/INFO INT,
+   estimated_dbu_cost DOUBLE, cluster_id STRING,
+   findings_json STRING, duration_ms BIGINT,
+   tables_json STRING, codes_json STRING,
+   -- F-09 extension (monitor_performance):
+   job_name STRING, spark_ui_url STRING, stage_id INT,
+   num_tasks INT, input_bytes BIGINT,
+   shuffle_read_bytes BIGINT, shuffle_write_bytes BIGINT,
+   gc_time_ms BIGINT, max_task_duration_ms BIGINT
    ```
-4. After writing, query the last 30 runs of the same signature and display a **sparkline trend** (ASCII or HTML) showing how `estimated_dbu_cost` and issue count have changed over time.
-5. Add a `%analyze_history {signature_or_table}` magic that displays historical trends for a given query or all queries touching a specific table.
-6. Make the tracker opt-in (disabled by default) via a config flag: `QueryAnalyzerConfig.enable_history = True`.
+4. After writing, query the last 30 runs of the same signature and display a **sparkline trend** showing how `estimated_dbu_cost` and severity counts have changed over time.
+5. `@monitor_performance` decorator (`performance_monitor.py`): apply to any Python or Spark function to track it in the same history table.  Inline HTML card after each call; regression vs last run auto-computed; Spark UI stage metrics captured via `localhost:4040`.
+6. Make the tracker opt-in (disabled by default) via: `spark.conf.set("spark_query_analyzer.history_enabled", "true")`.
 
 ---
 

@@ -31,6 +31,7 @@ MODULES = [
     "spark_query_analyzer/cost_estimator.py",
     "spark_query_analyzer/cross_query_optimiser.py",
     "spark_query_analyzer/history_tracker.py",
+    "spark_query_analyzer/performance_monitor.py",
     "spark_query_analyzer/system_info.py",
     "spark_query_analyzer/magic.py",
     "spark_query_analyzer/__init__.py",

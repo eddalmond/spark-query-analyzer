@@ -14,33 +14,16 @@ WHERE a.date >= '2024-01-01'
 GROUP BY a.id, b.name, c.value
 ```
 
-**Output:**
+**Output:** An HTML card rendered inline in the notebook, with:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 🔍 Spark Query Analyzer — 3 findings                        │
-│ 🔴 1  🟠 1  🟡 1                                            │
-└─────────────────────────────────────────────────────────────┘
+- **Severity header** — `🔴 1  🟠 1  🟡 1` badge showing finding counts
+- **Natural language summary** — what the query does, biggest problem, fix sentence (F-10)
+- **Finding list** — each finding with its code, affected table, and copy-ready fix snippet
+- **Cost badge** — DBU estimate based on compute tier (F-05)
+- **Spark UI deep-link** — `🔗 View Stage 3 in Spark UI` when run with `--execute` (F-15)
+- **Cluster advisor** — `🗺️ Photon recommended` when relevant (F-12)
 
-  What it does:  joins 3 tables with 1 aggregation against
-                 `facts` (? rows)
-
-  Biggest problem:  Table 'dim_b' (unknown size) is being
-                    shuffled across all executors when it's
-                    small enough to broadcast — causing an
-                    unnecessary full data exchange.
-
-  Fix:  Add a BROADCAST hint:
-        JOIN /*+ BROADCAST(dim_b) */ dim_b ON ...
-
-  🔴 MISSING_BROADCAST  dim_b  │  🟠 SORT_MERGE_JOIN
-  🟡 FULL_TABLE_SCAN    facts  │  🟢 BROADCAST_USED
-
-  ⚡ Est. $0.04 (0.07 DBU-hr, 8 cores, all_purpose_compute)
-
-  🔗 View Stage 3 in Spark UI  ← (with --execute)
-  🗺️ Cluster Advisor           ← Photon recommended
-```
+The card is identical whether viewed in a notebook or exported as a standalone HTML file (F-14).
 
 ---
 

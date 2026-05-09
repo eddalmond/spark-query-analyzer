@@ -48,7 +48,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -140,9 +140,30 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         if delta_sections:
             delta_html = '<div style="border-top:2px solid #e2e8f0;margin-top:4px;">' + ''.join(delta_sections) + '</div>'
 
+    # Build Post-Execution Skew section (F-03)
+    skew_html = ""
+    if skew_findings:
+        skew_findings_html = ""
+        for sf in skew_findings:
+            border = SEVERITY_BORDER.get(sf.severity, "#ccc")
+            sym = SEVERITY_SYMBOL.get(sf.severity, "⚪")
+            label = SEVERITY_LABEL.get(sf.severity, sf.severity.upper())
+            detail_html = f'<div class="sqa-node">{sf.detail}</div>' if sf.detail else ""
+            suggestion_html = f'<div class="sqa-suggestion"><strong>\u2192 Fix:</strong> {sf.suggestion}</div>' if sf.suggestion else ""
+            skew_findings_html += (
+                f'<div class="sqa-finding" style="border-left-color:{border}">'
+                f'<div class="sqa-severity" style="color:{border}">{sym} {label}<span class="sqa-code">{sf.code}</span></div>'
+                f'<div class="sqa-message">{sf.message}</div>'
+                f'{detail_html}{suggestion_html}'
+                f'</div>'
+            )
+        skew_header = '<div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#0f172a;">&#x1F4CA; Post-Execution (Actual Task Metrics)</div>'
+        skew_html = '<div style="border-top:2px solid #e2e8f0;margin-top:4px;">' + skew_header + skew_findings_html + '</div>'
+
     footer_html = (
         '<div class="sqa-summary">'
         '&#x1F4DD; Run <code>EXPLAIN FORMATTED &lt;query&gt;</code> in a separate cell for the full plan.'
+        '<br>&#x26A1; Run <code>%analyze --execute</code> to include post-execution skew analysis (F-03).'
         '</div>'
     )
 
@@ -150,7 +171,7 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}</div>'
+        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}{skew_html}</div>'
         f'{footer_html}</div>'
     )
 

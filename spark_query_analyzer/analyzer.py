@@ -37,7 +37,7 @@ class AnalysisResult:
         return {s: sum(1 for f in self.findings if f.severity == s) for s in ["critical", "high", "medium", "info"]}
 
 
-def run_analysis(spark, sql: str, line: str = "", full_cell: str = "") -> str:
+def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: bool = True) -> str:
     """Run EXPLAIN FORMATTED on the query, parse the plan, return HTML diagnostics."""
     # Run EXPLAIN FORMATTED
     try:
@@ -130,9 +130,40 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "") -> str:
                 detail=pf.detail,
             ))
 
+    # --- F-03: Deep Skew Analyser (Post-Execution) ---
+    skew_findings = []
+    if not dry_run:
+        from spark_query_analyzer.post_execution_analyser import run_post_execution_skew_analysis
+        from spark_query_analyzer.aqe_checker import read_aqe_config
+        aqe_cfg = read_aqe_config(spark)
+        skew_findings = run_post_execution_skew_analysis(
+            spark, sql=sql, aqe_enabled=aqe_cfg.adaptive_enabled
+        )
+        result.skew_findings = skew_findings
+        for sf in skew_findings:
+            detail = None
+            if sf.metrics:
+                detail = (f"max={sf.metrics.max_task_duration_ms/1000:.1f}s | "
+                          f"median={sf.metrics.median_task_duration_ms/1000:.1f}s | "
+                          f"ratio={sf.metrics.skew_ratio:.1f}x | "
+                          f"stragglers={sf.metrics.num_stragglers}")
+            result.findings.append(Finding(
+                severity=sf.severity,
+                code=sf.code,
+                message=sf.message,
+                node=f"stage {sf.stage_id}",
+                suggestion=sf.suggestion,
+                table=None,
+                detail=detail,
+            ))
+
     # Display via display_utils
     from spark_query_analyzer.display_utils import format_diagnostics
-    html = format_diagnostics(result, delta_results, getattr(result, 'python_findings', None))
+    html = format_diagnostics(
+        result, delta_results,
+        getattr(result, 'python_findings', None),
+        skew_findings,
+    )
     from IPython.display import HTML, display
     display(HTML(html))
     return ""

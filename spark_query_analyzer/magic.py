@@ -11,7 +11,10 @@ def register_analyze_magic():
     @register_cell_magic
     def analyze(line, cell):
         """Cell magic: put %analyze on the first line, SQL query below.
-        Also scans the cell for Python anti-patterns (F-04).
+
+        Flags:
+          --dry-run   : analyse plan only, no query execution (default)
+          --execute   : execute query and include post-execution skew analysis (F-03)
         """
         spark = _get_spark()
         if spark is None:
@@ -19,8 +22,20 @@ def register_analyze_magic():
                 "Could not acquire SparkSession. "
                 "Make sure this notebook is attached to a cluster with Spark >= 3.3."
             )
-        # The SQL is the entire cell body; pass full cell for Python scanning
-        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell)
+
+        # Parse flags
+        dry_run = True
+        line_stripped = line.strip()
+        if line_stripped:
+            tokens = line_stripped.split()
+            for token in tokens:
+                token_lower = token.lower()
+                if token_lower == "--dry-run":
+                    dry_run = True
+                elif token_lower == "--execute":
+                    dry_run = False
+
+        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell, dry_run=dry_run)
 
 
 def _get_spark():

@@ -1,5 +1,5 @@
 """
-IPython cell magic registration for %analyze.
+IPython cell magic registration for %analyze and %%analyze_batch.
 """
 
 from IPython.core.magic import register_cell_magic
@@ -57,3 +57,34 @@ def _get_spark():
             return None
     except Exception:
         return None
+
+
+def register_analyze_batch_magic():
+    """Register the %%analyze_batch block magic. Call after register_analyze_magic()."""
+    from spark_query_analyzer.cross_query_optimiser import analyse_batch, format_batch_diagnostics
+
+    @register_cell_magic
+    def analyze_batch(line, cell):
+        """Block magic: put %%analyze_batch at the top of a cell with multiple SQL statements.
+
+        Analyses multiple SQL statements together, finds shared scan opportunities,
+        identical filter patterns (CTE candidates), and cache candidates.
+
+        Example:
+            %%analyze_batch
+            SELECT * FROM fact_sales WHERE date = '2024-01-01';
+            SELECT * FROM fact_sales WHERE region = 'UK';
+            SELECT * FROM dim_product;
+        """
+        spark = _get_spark()
+        if spark is None:
+            raise RuntimeError(
+                "Could not acquire SparkSession. "
+                "Make sure this notebook is attached to a cluster with Spark >= 3.3."
+            )
+
+        result = analyse_batch(spark, cell)
+        html = format_batch_diagnostics(result)
+        from IPython.display import HTML, display
+        display(HTML(html))
+        return ""

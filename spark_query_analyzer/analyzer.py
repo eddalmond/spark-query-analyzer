@@ -24,6 +24,7 @@ class AnalysisResult:
     findings: list[Finding] = field(default_factory=list)
     delta_results: list = field(default_factory=list)  # DeltaHealthResult from F-01
     stats_findings: list = field(default_factory=list)  # StatsFinding from F-07
+    streaming_result: object = field(default=None)  # StreamingAnalysisResult from F-08
     plan_text: str = ""
     query: str = ""
 
@@ -50,6 +51,11 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     result = parse_plan(plan_text, sql)
     tables = _extract_table_names(sql)
     plan_lines = plan_text.split("\n")
+
+    # --- F-08: Structured Streaming Plan Analyser ---
+    from spark_query_analyzer.streaming_analyser import run_streaming_analysis, format_streaming_diagnostics
+    streaming_result = run_streaming_analysis(spark, sql, full_cell)
+    result.streaming_result = streaming_result
 
     # --- AQE config diagnostics (F-02: plan-aware AQE recommendations) ---
     from spark_query_analyzer.aqe_checker import read_aqe_config, build_recommendations
@@ -180,7 +186,7 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     cost_badge = format_cost_badge(cost_estimate)
     result.cost_estimate = cost_estimate
 
-    # Display via display_utils
+    # Display main diagnostics
     from spark_query_analyzer.display_utils import format_diagnostics
     html = format_diagnostics(
         result, delta_results,
@@ -191,6 +197,14 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     )
     from IPython.display import HTML, display
     display(HTML(html))
+
+    # Display streaming card separately (F-08)
+    if streaming_result and streaming_result.is_streaming:
+        from spark_query_analyzer.streaming_analyser import format_streaming_diagnostics
+        streaming_html = format_streaming_diagnostics(streaming_result)
+        if streaming_html:
+            display(HTML(streaming_html))
+
     return ""
 
 

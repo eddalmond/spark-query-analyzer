@@ -5,6 +5,7 @@ Core analysis engine: takes SQL, runs EXPLAIN FORMATTED, returns structured find
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+from spark_query_analyzer.narrative_explainer import NarrativeExplainer, format_narrative_banner, NarrativeResult
 
 
 @dataclass
@@ -27,6 +28,7 @@ class AnalysisResult:
     streaming_result: object = field(default=None)  # StreamingAnalysisResult from F-08
     plan_text: str = ""
     query: str = ""
+    narrative_result: NarrativeResult = field(default=None)  # F-10
 
     def has_critical(self) -> bool:
         return any(f.severity == "critical" for f in self.findings)
@@ -197,6 +199,12 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     except Exception:
         pass  # history tracking is best-effort
 
+    # --- F-10: Natural Language Explainer ---
+    from spark_query_analyzer.narrative_explainer import NarrativeExplainer
+    explainer = NarrativeExplainer(findings=result.findings, plan_text=plan_text, query=sql)
+    narrative_result = explainer.explain()
+    result.narrative_result = narrative_result
+
     # Display main diagnostics
     from spark_query_analyzer.display_utils import format_diagnostics
     html = format_diagnostics(
@@ -207,6 +215,7 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
         result.stats_findings,
         signature,
         history_html,
+        narrative_result,
     )
     from IPython.display import HTML, display
     display(HTML(html))

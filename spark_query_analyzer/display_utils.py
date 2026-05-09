@@ -44,11 +44,36 @@ _css = """
 .sqa-suggestion{font-size:12px;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;margin-top:6px;}
 .sqa-suggestion strong{color:#16a34a;}
 .sqa-summary{padding:8px 14px;background:#f8fafc;font-size:12px;color:#475569;border-top:1px solid #e2e8f0;}
+.sqa-narrative {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  color: #f1f5f9;
+  padding: 14px 16px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.sqa-narrative p { margin: 0 0 6px 0; }
+.sqa-narrative p:last-child { margin-bottom: 0; }
+.sqa-narrative strong { color: #60a5fa; }
+.sqa-narrative-badge {
+  display: inline-block;
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
 </style>
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "") -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "", narrative_result=None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -195,11 +220,17 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         '</div>'
     )
 
+    # Narrative banner (F-10)
+    narrative_banner_html = ""
+    if narrative_result:
+        from spark_query_analyzer.narrative_explainer import format_narrative_banner
+        narrative_banner_html = format_narrative_banner(narrative_result)
+
     return (
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}{skew_html}{stats_html}{history_tracking_html}</div>'
+        f'<div class="sqa-body">{narrative_banner_html}{findings_html}{python_html}{delta_html}{skew_html}{stats_html}{history_tracking_html}</div>'
         f'{footer_html}</div>'
     )
 

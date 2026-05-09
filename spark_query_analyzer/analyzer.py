@@ -45,6 +45,51 @@ def run_analysis(spark, sql: str, line: str = "") -> str:
         raise RuntimeError(f"EXPLAIN FORMATTED failed: {e}")
 
     result = parse_plan(plan_text, sql)
+    tables = _extract_table_names(sql)
+
+    # --- AQE config diagnostics ---
+    from spark_query_analyzer.system_info import get_aqe_config, build_aqe_diagnostics
+    aqe = get_aqe_config(spark)
+    for item in build_aqe_diagnostics(aqe):
+        result.findings.append(Finding(
+            severity=item["severity"],
+            code=item["code"],
+            message=item["message"],
+            node=None,
+            suggestion=item.get("suggestion", ""),
+            table=None,
+            detail=item.get("detail"),
+        ))
+
+    # --- File size / small file diagnostics ---
+    if tables:
+        from spark_query_analyzer.system_info import check_file_size_stats
+        for item in check_file_size_stats(spark, sql, tables):
+            result.findings.append(Finding(
+                severity=item["severity"],
+                code=item["code"],
+                message=item["message"],
+                node=None,
+                suggestion=item.get("suggestion", ""),
+                table=None,
+                detail=item.get("detail"),
+            ))
+
+    # --- Query history regression check ---
+    from spark_query_analyzer.system_info import check_query_history_for_slow_runs
+    for item in check_query_history_for_slow_runs(spark, sql):
+        result.findings.append(Finding(
+            severity=item["severity"],
+            code=item["code"],
+            message=item["message"],
+            node=None,
+            suggestion=item.get("suggestion", ""),
+            table=None,
+            detail=item.get("detail"),
+        ))
+
+    # --- Exploding join detection: scan rows vs join output rows ---
+    result.findings.extend(_detect_exploding_joins(plan_text, lines))
 
     # Display via display_utils
     from spark_query_analyzer.display_utils import format_diagnostics
@@ -224,3 +269,32 @@ def _count_table_occurrences(plan_text: str, tables: list[str]) -> dict[str, int
     for table in tables:
         counts[table] = len(re.findall(re.escape(table), plan_text, re.IGNORECASE))
     return {t: c for t, c in counts.items() if c >= 2}
+
+def _detect_exploding_joins(plan_text: str, lines: list[str]) -> list[Finding]:
+    """Detect joins that output far more rows than their inputs (exploding join)."""
+    findings = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(r"\d+\s+\[.*\]", stripped) and "Join" in stripped:
+            prev_context = "\n".join(lines[max(0, i-20):i])
+            next_context = "\n".join(lines[i+1:i+15])
+
+            input_scan_lines = [l for l in prev_context.split("\n") if "Scan" in l and "num_rows" in l.lower()]
+            output_join_lines = [l for l in next_context.split("\n") if "Join" in l]
+
+            if input_scan_lines and output_join_lines:
+                if "Aggregate" in next_context and "count" not in next_context.lower():
+                    findings.append(Finding(
+                        severity="critical",
+                        code="EXPLODING_JOIN",
+                        node=_extract_node_id(stripped),
+                        message="Join appears to be outputting significantly more rows than input. "
+                                "This typically happens when join selectivity is poor (missing filter on large table, "
+                                "or join on non-unique key creating a Cartesian product within partitions).",
+                        suggestion="Check that filters on both join inputs are selective enough. "
+                                   "Verify join key has proper cardinality. "
+                                   "Consider adding a pre-aggregate step to reduce left side before joining.",
+                        table=None,
+                        detail=stripped[:200],
+                    ))
+    return findings

@@ -157,12 +157,19 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
                 detail=detail,
             ))
 
+    # --- F-05: DBU Cost Estimator ---
+    from spark_query_analyzer.cost_estimator import build_cost_estimate, format_cost_badge
+    cost_estimate = build_cost_estimate(spark, plan_text)
+    cost_badge = format_cost_badge(cost_estimate)
+    result.cost_estimate = cost_estimate
+
     # Display via display_utils
     from spark_query_analyzer.display_utils import format_diagnostics
     html = format_diagnostics(
         result, delta_results,
         getattr(result, 'python_findings', None),
         skew_findings,
+        cost_badge,
     )
     from IPython.display import HTML, display
     display(HTML(html))

@@ -48,7 +48,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "") -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -61,6 +61,8 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         if n > 0:
             sym = SEVERITY_SYMBOL[sev]
             badge_html += f'<span class="sqa-badge-item sqa-badge-{sev}">{sym} {n}</span>'
+    if cost_badge:
+        badge_html += cost_badge
 
     # Build findings HTML (existing plan findings)
     findings_html = ""

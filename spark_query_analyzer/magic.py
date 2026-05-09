@@ -13,8 +13,9 @@ def register_analyze_magic():
         """Cell magic: put %analyze on the first line, SQL query below.
 
         Flags:
-          --dry-run   : analyse plan only, no query execution (default)
-          --execute   : execute query and include post-execution skew analysis (F-03)
+          --dry-run           : analyse plan only, no query execution (default)
+          --execute          : execute query and include post-execution skew analysis (F-03)
+          --export <path>     : export full HTML report to DBFS/mounted path (F-14)
         """
         spark = _get_spark()
         if spark is None:
@@ -25,17 +26,23 @@ def register_analyze_magic():
 
         # Parse flags
         dry_run = True
+        export_path = ""
         line_stripped = line.strip()
         if line_stripped:
             tokens = line_stripped.split()
-            for token in tokens:
-                token_lower = token.lower()
-                if token_lower == "--dry-run":
+            i = 0
+            while i < len(tokens):
+                token = tokens[i].lower()
+                if token == "--dry-run":
                     dry_run = True
-                elif token_lower == "--execute":
+                elif token == "--execute":
                     dry_run = False
+                elif token == "--export" and i + 1 < len(tokens):
+                    export_path = tokens[i + 1]
+                    i += 1
+                i += 1
 
-        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell, dry_run=dry_run)
+        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell, dry_run=dry_run, export_path=export_path)
 
 
 def _get_spark():

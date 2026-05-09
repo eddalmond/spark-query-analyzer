@@ -73,7 +73,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "", narrative_result=None) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "", narrative_result=None, cluster_recommendations: list = None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -177,11 +177,16 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
             label = SEVERITY_LABEL.get(sf.severity, sf.severity.upper())
             detail_html = f'<div class="sqa-node">{sf.detail}</div>' if sf.detail else ""
             suggestion_html = f'<div class="sqa-suggestion"><strong>\u2192 Fix:</strong> {sf.suggestion}</div>' if sf.suggestion else ""
+            ui_link_html = (
+                f'<div class="sqa-node"><a href="{sf.spark_ui_link}" target="_blank" style="color:#60a5fa;">'
+                f'&#x1F517; View Stage {sf.stage_id} in Spark UI</a></div>'
+                if getattr(sf, 'spark_ui_link', None) else ""
+            )
             skew_findings_html += (
                 f'<div class="sqa-finding" style="border-left-color:{border}">'
                 f'<div class="sqa-severity" style="color:{border}">{sym} {label}<span class="sqa-code">{sf.code}</span></div>'
                 f'<div class="sqa-message">{sf.message}</div>'
-                f'{detail_html}{suggestion_html}'
+                f'{detail_html}{ui_link_html}{suggestion_html}'
                 f'</div>'
             )
         skew_header = '<div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#0f172a;">&#x1F4CA; Post-Execution (Actual Task Metrics)</div>'
@@ -226,11 +231,17 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         from spark_query_analyzer.narrative_explainer import format_narrative_banner
         narrative_banner_html = format_narrative_banner(narrative_result)
 
+    # Build Cluster Advisor section (F-12)
+    cluster_html = ""
+    if cluster_recommendations:
+        from spark_query_analyzer.cluster_advisor import format_cluster_advisor
+        cluster_html = format_cluster_advisor(cluster_recommendations)
+
     return (
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{narrative_banner_html}{findings_html}{python_html}{delta_html}{skew_html}{stats_html}{history_tracking_html}</div>'
+        f'<div class="sqa-body">{narrative_banner_html}{findings_html}{python_html}{delta_html}{skew_html}{stats_html}{cluster_html}{history_tracking_html}</div>'
         f'{footer_html}</div>'
     )
 

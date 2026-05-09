@@ -41,7 +41,7 @@ class AnalysisResult:
         return {s: sum(1 for f in self.findings if f.severity == s) for s in ["critical", "high", "medium", "info"]}
 
 
-def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: bool = True) -> str:
+def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: bool = True, export_path: str = "") -> str:
     """Run EXPLAIN FORMATTED on the query, parse the plan, return HTML diagnostics."""
     # Run EXPLAIN FORMATTED
     try:
@@ -205,6 +205,21 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     narrative_result = explainer.explain()
     result.narrative_result = narrative_result
 
+    # --- F-12: Cluster Configuration Advisor ---
+    cluster_recommendations = []
+    try:
+        from spark_query_analyzer.cluster_advisor import recommend_cluster
+        cluster_recommendations = recommend_cluster(
+            spark,
+            plan_text=plan_text,
+            findings=result.findings,
+            python_findings=getattr(result, 'python_findings', None),
+            stats_findings=result.stats_findings,
+        )
+        result.cluster_recommendations = cluster_recommendations
+    except Exception:
+        pass  # best-effort
+
     # Display main diagnostics
     from spark_query_analyzer.display_utils import format_diagnostics
     html = format_diagnostics(
@@ -216,9 +231,27 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
         signature,
         history_html,
         narrative_result,
+        cluster_recommendations,
     )
     from IPython.display import HTML, display
     display(HTML(html))
+
+    # --- F-14: HTML Report Export ---
+    if export_path:
+        from spark_query_analyzer.report_exporter import export_report
+        narrative_banner = ""
+        if narrative_result:
+            from spark_query_analyzer.narrative_explainer import format_narrative_banner
+            narrative_banner = format_narrative_banner(narrative_result)
+        export_report(
+            spark,
+            report_html=html,
+            query=sql,
+            plan_text=plan_text,
+            severity_counts=result.severity_counts,
+            narrative_banner=narrative_banner,
+            export_path=export_path,
+        )
 
     # Display streaming card separately (F-08)
     if streaming_result and streaming_result.is_streaming:

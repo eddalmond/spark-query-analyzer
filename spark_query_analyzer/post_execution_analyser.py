@@ -29,6 +29,71 @@ class TaskMetrics:
     num_stragglers: int  # tasks > 2x median
 
 
+def get_spark_ui_url(spark) -> Optional[tuple[str, str]]:
+    """
+    Get the Spark UI URL and construct the correct proxy URL format.
+    Returns (base_url, cluster_id) or None if unavailable.
+    """
+    try:
+        sc = spark.sparkContext
+        ui_web_url = sc.uiWebUrl
+        app_id = sc.applicationId
+
+        # On Databricks clusters, the Spark UI is proxied
+        # Format: https://<workspace_host>/driver-proxy/o/<org_id>/<cluster_id>/4040/
+        # We can construct direct stage/task links from the base UI URL
+        return ui_web_url, app_id
+    except Exception:
+        return None
+
+
+def build_spark_ui_link(spark, stage_id: int, metrics: Optional[TaskMetrics] = None) -> str:
+    """
+    Build a direct link to a specific stage in the Spark UI.
+    Works for both direct Spark UI (local) and Databricks proxy URLs.
+    """
+    ui_info = get_spark_ui_url(spark)
+    if not ui_info:
+        return ""
+
+    ui_web_url, app_id = ui_info
+
+    # For Databricks proxy URLs, construct the driver-proxy link
+    if "driver-proxy" not in ui_web_url and ".cloud.databricks.com" in ui_web_url:
+        # Extract org_id and cluster_id from the Spark environment
+        try:
+            org_id = spark.sparkContext.getConf().get(
+                "spark.databricks.clusterUsageTags.orgId", ""
+            )
+            cluster_id = spark.sparkContext.getConf().get(
+                "spark.databricks.clusterUsageTags.clusterId", ""
+            )
+            if org_id and cluster_id:
+                proxy_base = ui_web_url.split("/driver-proxy")[0]
+                stage_link = (
+                    f"{proxy_base}/driver-proxy/o/{org_id}/{cluster_id}/4040"
+                    f"/stages/stage/?id={stage_id}&attempt=0"
+                )
+                return stage_link
+        except Exception:
+            pass
+
+    # Direct Spark UI (local / Docker)
+    stage_link = f"{ui_web_url}/stages/stage/?id={stage_id}&attempt=0"
+    return stage_link
+
+
+def build_sql_link(spark, execution_id: str = "") -> str:
+    """Build a link to the SQL tab in the Spark UI for a given execution ID."""
+    ui_info = get_spark_ui_url(spark)
+    if not ui_info:
+        return ""
+    ui_web_url, app_id = ui_info
+    if execution_id:
+        return f"{ui_web_url}/sql/overview?executionId={execution_id}"
+    return f"{ui_web_url}/sql"
+
+
 @dataclass
 class SkewFinding:
     severity: str  # "critical" | "high" | "medium" | "info"
@@ -37,6 +102,15 @@ class SkewFinding:
     stage_id: int
     suggestion: str
     metrics: Optional[TaskMetrics] = None
+    spark_ui_link: Optional[str] = None  # F-15: direct link to stage in Spark UI
+
+
+def _enrich_with_spark_ui_links(spark, findings: list[SkewFinding]) -> list[SkewFinding]:
+    """Add Spark UI deep-links to skew findings (F-15)."""
+    for f in findings:
+        if f.stage_id > 0:
+            f.spark_ui_link = build_spark_ui_link(spark, f.stage_id, f.metrics)
+    return findings
 
 
 def get_spark_app_id(spark) -> Optional[str]:
@@ -290,6 +364,9 @@ def run_post_execution_skew_analysis(spark, sql: str = "", aqe_enabled: bool = F
             stage_id=0,
             suggestion="Spark UI may not be accessible in this compute type.",
         )]
+
+    # Enrich skew findings with Spark UI deep-links (F-15)
+    findings = _enrich_with_spark_ui_links(spark, findings)
 
     return findings
 

@@ -1,0 +1,226 @@
+"""
+Core analysis engine: takes SQL, runs EXPLAIN FORMATTED, returns structured findings.
+"""
+
+import re
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class Finding:
+    severity: str  # "critical" | "high" | "medium" | "info"
+    code: str      # short identifier e.g. "MISSING_BROADCAST"
+    message: str   # human-readable description
+    node: str      # plan node or table involved
+    suggestion: str # actionable fix
+    table: Optional[str] = None
+    detail: Optional[str] = None
+
+
+@dataclass
+class AnalysisResult:
+    findings: list[Finding] = field(default_factory=list)
+    plan_text: str = ""
+    query: str = ""
+
+    def has_critical(self) -> bool:
+        return any(f.severity == "critical" for f in self.findings)
+
+    def has_high(self) -> bool:
+        return any(f.severity == "high" for f in self.findings)
+
+    @property
+    def severity_counts(self) -> dict:
+        return {s: sum(1 for f in self.findings if f.severity == s) for s in ["critical", "high", "medium", "info"]}
+
+
+def run_analysis(spark, sql: str, line: str = "") -> str:
+    """Run EXPLAIN FORMATTED on the query, parse the plan, return HTML diagnostics."""
+    # Run EXPLAIN FORMATTED
+    try:
+        explained = spark.sql(f"EXPLAIN FORMATTED {sql}")
+        plan_text = "\n".join(row[0] for row in explained.collect())
+    except Exception as e:
+        raise RuntimeError(f"EXPLAIN FORMATTED failed: {e}")
+
+    result = parse_plan(plan_text, sql)
+
+    # Display via display_utils
+    from spark_query_analyzer.display_utils import format_diagnostics
+    html = format_diagnostics(result)
+    from IPython.display import HTML, display
+    display(HTML(html))
+    return ""
+
+
+def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
+    """Parse the raw EXPLAIN output into structured findings."""
+    result = AnalysisResult(plan_text=plan_text, query=query)
+    lines = plan_text.split("\n")
+
+    tables_in_query = _extract_table_names(query)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Broadcast miss: large table shuffled instead of broadcasted
+        # Pattern: Exchange (partition=..., codegen=...) followed by Scan or Join with estimated size
+        if "Exchange" in stripped and i + 1 < len(lines):
+            # Check if next meaningful line is a scan of a large table (heuristic: no BroadcastExchange)
+            next_lines = "\n".join(lines[i+1:i+5])
+            if "BroadcastExchange" not in next_lines and any(t in next_lines for t in tables_in_query):
+                for table in tables_in_query:
+                    if table in next_lines and "Scan" in next_lines:
+                        result.findings.append(Finding(
+                            severity="critical",
+                            code="MISSING_BROADCAST",
+                            node=_extract_node_id(stripped),
+                            message=f"Table '{table}' is being shuffled instead of broadcasted. "
+                                    f"Estimated plan shows an Exchange but no BroadcastExchange for this join.",
+                            suggestion=f"Add BROADCAST hint: JOIN {table} BROADCAST(t) "
+                                       f"or increase spark.sql.autoBroadcastJoinThreshold "
+                                       f"(currently defaults to 10MB).",
+                            table=table,
+                            detail=_extract_detail(next_lines)
+                        ))
+                        break
+
+        # Cartesian product: Join with no condition
+        if re.match(r"(-+\+)+", stripped) and "Join" in stripped:
+            join_line = stripped
+            # Check if preceding context has filter on one table only (sign of cross join)
+            prev_lines = "\n".join(lines[max(0, i-10):i])
+            if "Filter" not in prev_lines or prev_lines.count("Filter") <= 1:
+                # Look for join condition absence
+                if "Condition" not in join_line and "Inner" in join_line:
+                    result.findings.append(Finding(
+                        severity="critical",
+                        code="CARTESIAN_PRODUCT",
+                        node=_extract_node_id(stripped),
+                        message="Join has no condition — this is a Cartesian (cross) product. "
+                                "Every row in the left table will be joined to every row in the right.",
+                        suggestion="Add an explicit JOIN condition or filter one side to a single partition "
+                                   "if a cross join is intended.",
+                        table=None,
+                        detail=join_line
+                    ))
+
+        # Full table scan: Scan node with no filter predicates on partitioned column
+        if stripped.startswith("+- ") or stripped.startswith("+- "):
+            scan_match = re.search(r"Scan (?:.*? )?(\w+)", stripped)
+            filter_match = re.search(r"Filter.*?\[(.*?)\]", stripped)
+            if scan_match and not filter_match:
+                table = scan_match.group(1)
+                if table != "<unknown>" and table not in ["", " "]:
+                    result.findings.append(Finding(
+                        severity="high",
+                        code="FULL_TABLE_SCAN",
+                        node=_extract_node_id(stripped),
+                        message=f"Full table scan on '{table}' with no filter predicates. "
+                                f"All partitions will be read regardless of partition pruning.",
+                        suggestion=f"Add partition column filter (WHERE partition_col = ...) "
+                                   f"or rewrite query to reference partition column in filter.",
+                        table=table,
+                        detail=stripped
+                    ))
+
+        # Sort merge join: Exchange + Sort before a Join
+        if "Sort" in stripped and i > 0:
+            prev_lines = "\n".join(lines[max(0, i-5):i])
+            if "Exchange" in prev_lines:
+                result.findings.append(Finding(
+                    severity="high",
+                    code="SORT_MERGE_JOIN",
+                    node=_extract_node_id(stripped),
+                    message="Sort-based join detected. Data is being sorted before a shuffle-merge join.",
+                    suggestion="If joining large tables, consider BROADCAST or shuffle-hash join instead. "
+                               "Use hint: JOIN ... SHUFFLE_HASH(t) or BROADCAST(t).",
+                    table=None,
+                    detail=stripped
+                ))
+
+        # Repeated table scans: same table appears multiple times
+        table_counts = _count_table_occurrences(plan_text, tables_in_query)
+        for table, count in table_counts.items():
+            if count >= 3:
+                result.findings.append(Finding(
+                    severity="medium",
+                    code="REPEATED_SCAN",
+                    node=None,
+                    message=f"Table '{table}' appears {count} times in the execution plan. "
+                            f"It is being scanned multiple times across the query.",
+                    suggestion=f"Consider using a CTE (WITH clause) to materialise '{table}' once, "
+                               f"or cache the table with df.cache() if it's reused.",
+                    table=table
+                ))
+
+        # BroadcastExchange present — good, flag it
+        if "BroadcastExchange" in stripped:
+            broadcast_match = re.search(r"BroadcastExchange\s+(?:.*? )?(\w+)", stripped)
+            if broadcast_match:
+                result.findings.append(Finding(
+                    severity="info",
+                    code="BROADCAST_USED",
+                    node=_extract_node_id(stripped),
+                    message=f"Broadcast join in use (estimated {broadcast_match.group(1)} bytes).",
+                    suggestion="No action needed — broadcast is optimal for this table.",
+                    table=broadcast_match.group(1) if broadcast_match else None,
+                    detail=stripped
+                ))
+
+        # Skew indicator: multiple exchanges with same partition count
+        exchanges = [l.strip() for l in lines if "Exchange" in l and "partition=" in l]
+        if len(exchanges) > 2:
+            partition_counts = re.findall(r"partition=(\d+)", "\n".join(exchanges))
+            if len(set(partition_counts)) > 3:  # High variance — possible skew
+                result.findings.append(Finding(
+                    severity="medium",
+                    code="SKEW_INDICATOR",
+                    node=None,
+                    message=f"Detected {len(exchanges)} exchanges with varying partition counts: {partition_counts}. "
+                            f"This may indicate data skew.",
+                    suggestion="Check partition size distribution with REPL. "
+                              "Consider using skewed join optimisation: spark.sql.adaptive.skewJoinEnabled=true.",
+                    table=None
+                ))
+
+    return result
+
+
+def _extract_table_names(sql: str) -> list[str]:
+    """Rough extraction of table names from SQL."""
+    tables = set()
+    # Remove comments and string literals
+    sql_clean = re.sub(r"--.*", "", sql)
+    sql_clean = re.sub(r"'[^']*'", "", sql_clean)
+    # Find FROM and JOIN table references
+    patterns = [
+        r"(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)",
+        r"(?:FROM|JOIN)\s+(\w+)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, sql_clean, re.IGNORECASE):
+            name = match.group(1).split(".")[-1]
+            if name.upper() not in ("SELECT", "WHERE", "AND", "OR", "ON"):
+                tables.add(name)
+    return list(tables)
+
+
+def _extract_node_id(line: str) -> str:
+    """Extract the node ID at the start of an Explain line."""
+    m = re.match(r"^(\d+)", line.strip())
+    return m.group(1) if m else "?"
+
+
+def _extract_detail(context: str) -> str:
+    """Pull a clean snippet from plan context for detail field."""
+    lines = [l.strip() for l in context.split("\n") if l.strip()]
+    return lines[0][:200] if lines else ""
+
+
+def _count_table_occurrences(plan_text: str, tables: list[str]) -> dict[str, int]:
+    counts = {}
+    for table in tables:
+        counts[table] = len(re.findall(re.escape(table), plan_text, re.IGNORECASE))
+    return {t: c for t, c in counts.items() if c >= 2}

@@ -48,7 +48,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None) -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -62,6 +62,7 @@ def format_diagnostics(result: AnalysisResult) -> str:
             sym = SEVERITY_SYMBOL[sev]
             badge_html += f'<span class="sqa-badge-item sqa-badge-{sev}">{sym} {n}</span>'
 
+    # Build findings HTML (existing plan findings)
     findings_html = ""
     if not result.findings:
         findings_html = '<div style="padding:16px;font-size:13px;color:#16a34a;">&#x2705; No obvious performance issues detected.</div>'
@@ -85,6 +86,33 @@ def format_diagnostics(result: AnalysisResult) -> str:
                 f'</div>'
             )
 
+    # Build Delta Storage section (F-01)
+    delta_html = ""
+    if delta_results:
+        delta_sections = []
+        for dr in delta_results:
+            if not dr.findings:
+                continue
+            table_header = f'<div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#0f172a;">&#x1F4C4; Delta Storage: {dr.table} &nbsp;<span style="color:#64748b;font-weight:400">({dr.num_files:,} files, {dr.table_size_gb:.1f}GB)</span></div>'
+            delta_findings_html = ""
+            for df in dr.findings:
+                border = SEVERITY_BORDER.get(df.severity, "#ccc")
+                sym = SEVERITY_SYMBOL.get(df.severity, "⚪")
+                label = SEVERITY_LABEL.get(df.severity, df.severity.upper())
+                detail_html = f'<div class="sqa-node">{df.detail}</div>' if df.detail else ""
+                suggestion_html = f'<div class="sqa-suggestion"><strong>\u2192 Fix:</strong> {df.suggestion}</div>' if df.suggestion else ""
+                delta_findings_html += (
+                    f'<div class="sqa-finding" style="border-left-color:{border}">'
+                    f'<div class="sqa-severity" style="color:{border}">{sym} {label}<span class="sqa-code">{df.code}</span></div>'
+                    f'<div class="sqa-message">{df.message}</div>'
+                    f'{detail_html}{suggestion_html}'
+                    f'</div>'
+                )
+            delta_sections.append(table_header + delta_findings_html)
+
+        if delta_sections:
+            delta_html = '<div style="border-top:2px solid #e2e8f0;margin-top:4px;">' + ''.join(delta_sections) + '</div>'
+
     footer_html = (
         '<div class="sqa-summary">'
         '&#x1F4DD; Run <code>EXPLAIN FORMATTED &lt;query&gt;</code> in a separate cell for the full plan.'
@@ -95,7 +123,7 @@ def format_diagnostics(result: AnalysisResult) -> str:
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{findings_html}</div>'
+        f'<div class="sqa-body">{findings_html}{delta_html}</div>'
         f'{footer_html}</div>'
     )
 

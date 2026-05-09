@@ -21,6 +21,7 @@ class Finding:
 @dataclass
 class AnalysisResult:
     findings: list[Finding] = field(default_factory=list)
+    delta_results: list = field(default_factory=list)  # DeltaHealthResult from F-01
     plan_text: str = ""
     query: str = ""
 
@@ -46,6 +47,7 @@ def run_analysis(spark, sql: str, line: str = "") -> str:
 
     result = parse_plan(plan_text, sql)
     tables = _extract_table_names(sql)
+    plan_lines = plan_text.split("\n")
 
     # --- AQE config diagnostics ---
     from spark_query_analyzer.system_info import get_aqe_config, build_aqe_diagnostics
@@ -88,12 +90,31 @@ def run_analysis(spark, sql: str, line: str = "") -> str:
             detail=item.get("detail"),
         ))
 
-    # --- Exploding join detection: scan rows vs join output rows ---
-    result.findings.extend(_detect_exploding_joins(plan_text, lines))
+    # --- Exploding join detection ---
+    for finding in _detect_exploding_joins(plan_text, plan_lines):
+        result.findings.append(finding)
+
+    # --- F-01: Delta Lake Health Analyser ---
+    delta_results = []
+    if tables:
+        from spark_query_analyzer.delta_analyser import analyse_all_tables
+        delta_results = analyse_all_tables(spark, tables, sql)
+        result.delta_results = delta_results
+        for dr in delta_results:
+            for df in dr.findings:
+                result.findings.append(Finding(
+                    severity=df.severity,
+                    code=df.code,
+                    message=df.message,
+                    node=None,
+                    suggestion=df.suggestion,
+                    table=df.table,
+                    detail=df.detail,
+                ))
 
     # Display via display_utils
     from spark_query_analyzer.display_utils import format_diagnostics
-    html = format_diagnostics(result)
+    html = format_diagnostics(result, delta_results)
     from IPython.display import HTML, display
     display(HTML(html))
     return ""
@@ -110,9 +131,7 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
         stripped = line.strip()
 
         # Broadcast miss: large table shuffled instead of broadcasted
-        # Pattern: Exchange (partition=..., codegen=...) followed by Scan or Join with estimated size
         if "Exchange" in stripped and i + 1 < len(lines):
-            # Check if next meaningful line is a scan of a large table (heuristic: no BroadcastExchange)
             next_lines = "\n".join(lines[i+1:i+5])
             if "BroadcastExchange" not in next_lines and any(t in next_lines for t in tables_in_query):
                 for table in tables_in_query:
@@ -131,13 +150,11 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                         ))
                         break
 
-        # Cartesian product: Join with no condition
+        # Cartesian product
         if re.match(r"(-+\+)+", stripped) and "Join" in stripped:
             join_line = stripped
-            # Check if preceding context has filter on one table only (sign of cross join)
             prev_lines = "\n".join(lines[max(0, i-10):i])
             if "Filter" not in prev_lines or prev_lines.count("Filter") <= 1:
-                # Look for join condition absence
                 if "Condition" not in join_line and "Inner" in join_line:
                     result.findings.append(Finding(
                         severity="critical",
@@ -151,7 +168,7 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                         detail=join_line
                     ))
 
-        # Full table scan: Scan node with no filter predicates on partitioned column
+        # Full table scan
         if stripped.startswith("+- ") or stripped.startswith("+- "):
             scan_match = re.search(r"Scan (?:.*? )?(\w+)", stripped)
             filter_match = re.search(r"Filter.*?\[(.*?)\]", stripped)
@@ -170,7 +187,7 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                         detail=stripped
                     ))
 
-        # Sort merge join: Exchange + Sort before a Join
+        # Sort merge join
         if "Sort" in stripped and i > 0:
             prev_lines = "\n".join(lines[max(0, i-5):i])
             if "Exchange" in prev_lines:
@@ -185,7 +202,7 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                     detail=stripped
                 ))
 
-        # Repeated table scans: same table appears multiple times
+        # Repeated table scans
         table_counts = _count_table_occurrences(plan_text, tables_in_query)
         for table, count in table_counts.items():
             if count >= 3:
@@ -200,7 +217,7 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                     table=table
                 ))
 
-        # BroadcastExchange present — good, flag it
+        # BroadcastExchange present
         if "BroadcastExchange" in stripped:
             broadcast_match = re.search(r"BroadcastExchange\s+(?:.*? )?(\w+)", stripped)
             if broadcast_match:
@@ -214,11 +231,11 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
                     detail=stripped
                 ))
 
-        # Skew indicator: multiple exchanges with same partition count
+        # Skew indicator
         exchanges = [l.strip() for l in lines if "Exchange" in l and "partition=" in l]
         if len(exchanges) > 2:
             partition_counts = re.findall(r"partition=(\d+)", "\n".join(exchanges))
-            if len(set(partition_counts)) > 3:  # High variance — possible skew
+            if len(set(partition_counts)) > 3:
                 result.findings.append(Finding(
                     severity="medium",
                     code="SKEW_INDICATOR",
@@ -234,16 +251,10 @@ def parse_plan(plan_text: str, query: str = "") -> AnalysisResult:
 
 
 def _extract_table_names(sql: str) -> list[str]:
-    """Rough extraction of table names from SQL."""
     tables = set()
-    # Remove comments and string literals
     sql_clean = re.sub(r"--.*", "", sql)
     sql_clean = re.sub(r"'[^']*'", "", sql_clean)
-    # Find FROM and JOIN table references
-    patterns = [
-        r"(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)",
-        r"(?:FROM|JOIN)\s+(\w+)",
-    ]
+    patterns = [r"(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)", r"(?:FROM|JOIN)\s+(\w+)"]
     for pattern in patterns:
         for match in re.finditer(pattern, sql_clean, re.IGNORECASE):
             name = match.group(1).split(".")[-1]
@@ -253,13 +264,11 @@ def _extract_table_names(sql: str) -> list[str]:
 
 
 def _extract_node_id(line: str) -> str:
-    """Extract the node ID at the start of an Explain line."""
     m = re.match(r"^(\d+)", line.strip())
     return m.group(1) if m else "?"
 
 
 def _extract_detail(context: str) -> str:
-    """Pull a clean snippet from plan context for detail field."""
     lines = [l.strip() for l in context.split("\n") if l.strip()]
     return lines[0][:200] if lines else ""
 
@@ -270,6 +279,7 @@ def _count_table_occurrences(plan_text: str, tables: list[str]) -> dict[str, int
         counts[table] = len(re.findall(re.escape(table), plan_text, re.IGNORECASE))
     return {t: c for t, c in counts.items() if c >= 2}
 
+
 def _detect_exploding_joins(plan_text: str, lines: list[str]) -> list[Finding]:
     """Detect joins that output far more rows than their inputs (exploding join)."""
     findings = []
@@ -278,10 +288,8 @@ def _detect_exploding_joins(plan_text: str, lines: list[str]) -> list[Finding]:
         if re.match(r"\d+\s+\[.*\]", stripped) and "Join" in stripped:
             prev_context = "\n".join(lines[max(0, i-20):i])
             next_context = "\n".join(lines[i+1:i+15])
-
             input_scan_lines = [l for l in prev_context.split("\n") if "Scan" in l and "num_rows" in l.lower()]
             output_join_lines = [l for l in next_context.split("\n") if "Join" in l]
-
             if input_scan_lines and output_join_lines:
                 if "Aggregate" in next_context and "count" not in next_context.lower():
                     findings.append(Finding(

@@ -186,6 +186,17 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
     cost_badge = format_cost_badge(cost_estimate)
     result.cost_estimate = cost_estimate
 
+    # --- F-09: History Tracking ---
+    history_html = ""
+    signature = None
+    try:
+        from spark_query_analyzer.history_tracker import track_analysis_run, format_history_trends
+        signature = track_analysis_run(spark, result, sql)
+        if signature:
+            history_html = format_history_trends(spark, signature)
+    except Exception:
+        pass  # history tracking is best-effort
+
     # Display main diagnostics
     from spark_query_analyzer.display_utils import format_diagnostics
     html = format_diagnostics(
@@ -194,6 +205,8 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
         skew_findings,
         cost_badge,
         result.stats_findings,
+        signature,
+        history_html,
     )
     from IPython.display import HTML, display
     display(HTML(html))

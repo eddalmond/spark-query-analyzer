@@ -48,7 +48,7 @@ _css = """
 """
 
 
-def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None) -> str:
+def format_diagnostics(result: AnalysisResult, delta_results: list = None, python_findings: list = None, skew_findings: list = None, cost_badge: str = "", stats_findings: list = None, query_signature: str = "", history_tracking_html: str = "") -> str:
     """Render an AnalysisResult as a self-contained HTML fragment."""
     counts = result.severity_counts
     total = len(result.findings)
@@ -199,7 +199,7 @@ def format_diagnostics(result: AnalysisResult, delta_results: list = None, pytho
         f'<div class="sqa">'
         f'<div class="sqa-header"><span>&#x1F50D; {header_title}</span>'
         f'<div class="sqa-badge">{badge_html}</div></div>'
-        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}{skew_html}{stats_html}</div>'
+        f'<div class="sqa-body">{findings_html}{python_html}{delta_html}{skew_html}{stats_html}{history_tracking_html}</div>'
         f'{footer_html}</div>'
     )
 

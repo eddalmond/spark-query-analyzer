@@ -23,6 +23,7 @@ class Finding:
 class AnalysisResult:
     findings: list[Finding] = field(default_factory=list)
     delta_results: list = field(default_factory=list)  # DeltaHealthResult from F-01
+    stats_findings: list = field(default_factory=list)  # StatsFinding from F-07
     plan_text: str = ""
     query: str = ""
 
@@ -157,6 +158,22 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
                 detail=detail,
             ))
 
+    # --- F-07: Schema & Statistics Health Checker ---
+    from spark_query_analyzer.stats_checker import run_stats_health_check
+    stats_findings = run_stats_health_check(spark, sql, tables)
+    result.stats_findings = stats_findings
+    for sf in stats_findings:
+        result.findings.append(Finding(
+            severity=sf.severity,
+            code=sf.code,
+            message=sf.message,
+            node=None,
+            suggestion=sf.suggestion,
+            table=sf.table,
+            detail=sf.detail,
+            config_snippet=sf.analyze_command,
+        ))
+
     # --- F-05: DBU Cost Estimator ---
     from spark_query_analyzer.cost_estimator import build_cost_estimate, format_cost_badge
     cost_estimate = build_cost_estimate(spark, plan_text)
@@ -170,6 +187,7 @@ def run_analysis(spark, sql: str, line: str = "", full_cell: str = "", dry_run: 
         getattr(result, 'python_findings', None),
         skew_findings,
         cost_badge,
+        result.stats_findings,
     )
     from IPython.display import HTML, display
     display(HTML(html))

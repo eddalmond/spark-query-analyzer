@@ -18,8 +18,8 @@ GROUP BY a.id, b.name, c.value
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 🔍 Spark Query Analyzer — 3 findings                       │
-│ 🔴 1  🟠 1  🟡 1                                             │
+│ 🔍 Spark Query Analyzer — 3 findings                        │
+│ 🔴 1  🟠 1  🟡 1                                            │
 └─────────────────────────────────────────────────────────────┘
 
   What it does:  joins 3 tables with 1 aggregation against
@@ -27,8 +27,8 @@ GROUP BY a.id, b.name, c.value
 
   Biggest problem:  Table 'dim_b' (unknown size) is being
                     shuffled across all executors when it's
-                    small enough to broadcast — this is
-                    causing an unnecessary full data exchange.
+                    small enough to broadcast — causing an
+                    unnecessary full data exchange.
 
   Fix:  Add a BROADCAST hint:
         JOIN /*+ BROADCAST(dim_b) */ dim_b ON ...
@@ -62,52 +62,55 @@ GROUP BY a.id, b.name, c.value
 | F-14 | **HTML Export** | `%analyze --export <path>` | Export the full diagnostic card as a self-contained HTML file |
 | F-15 | **Spark UI Deep-Links** | `%analyze --execute` | Direct `🔗 View Stage X in Spark UI` links on skew findings |
 
-> F-11 (Automated Query Rewriter) and F-13 (CI/CD Lint Mode) require external packages or API calls — see the [roadmap][].
+> F-11 (Query Rewriter) and F-13 (CI/CD Lint) need external packages or API access — see the [roadmap][].
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Install the package
-
-**Option A — Databricks Repos (recommended)**
-```
+### Option A — Databricks Repos (recommended for dev)
+```python
 %sh
 pip install git+https://github.com/eddalmond/spark-query-analyzer.git --quiet
 ```
+```python
+from spark_query_analyzer import register_analyze_magic
+from spark_query_analyzer.magic import register_analyze_batch_magic
+register_analyze_magic()
+register_analyze_batch_magic()
+```
 
-**Option B — Clone into DBFS**
+### Option B — Clone to DBFS
 ```python
 %sh
 git clone https://github.com/eddalmond/spark-query-analyzer.git /tmp/spark_query_analyzer
 ```
-
-**Option C — Community Edition (no git)**
-Upload `spark_query_analyzer/` as a library or copy it to a workspace directory.
-
-### 2. Register the magic (once per session)
 ```python
 import sys
 sys.path.insert(0, "/tmp/spark_query_analyzer")
-
 from spark_query_analyzer import register_analyze_magic
 from spark_query_analyzer.magic import register_analyze_batch_magic
-
 register_analyze_magic()
 register_analyze_batch_magic()
-
-print("✅ Ready — use %analyze in any SQL cell")
 ```
 
-### 3. Run it
+### Option C — Community Edition (no git)
+Upload `spark_query_analyzer/` as a library or copy it to a workspace directory, then import as above.
+
+### Option D — Paste-and-go (fully offline, locked-down prod) ⭐
+
+If you can't use git, pip, or library upload — the repo ships `spark_query_analyzer_single.py`
+(~210KB, all 17 modules inlined). Copy it into a notebook cell, run it once, done. Nothing else needed.
+
 ```python
-%analyze
-SELECT a.id, b.name, SUM(a.value) AS total
-FROM facts a
-JOIN dim_b b ON a.b_id = b.id
-WHERE a.date >= '2024-01-01'
-GROUP BY a.id, b.name
+# Copy the entire contents of spark_query_analyzer_single.py into this cell and run it
+# OR if the file is already on DBFS:
+exec(open("/tmp/spark_query_analyzer_single.py").read())
 ```
+
+After that cell completes, `%analyze` and `%%analyze_batch` are registered for the rest of the session.
+
+> **To regenerate** after pulling updates: run `python3 scripts/build_single_file.py` locally.
 
 ---
 
@@ -147,13 +150,13 @@ spark_query_analyzer/
 ├── report_exporter.py        # F-14: self-contained HTML export
 ├── post_execution_analyser.py # F-03 + F-15: Spark UI REST API + deep-links
 ├── python_scanner.py         # F-04: AST-based Python anti-pattern scanner
-├── aqe_checker.py            # F-02: AQE config reader + plan-aware findings
+├── aqe_checker.py           # F-02: AQE config reader + plan-aware findings
 ├── stats_checker.py          # F-07: DESCRIBE TABLE / ANALYZE TABLE checks
 ├── streaming_analyser.py     # F-08: streaming sensor / watermark checks
 ├── delta_analyser.py         # F-01: Delta Lake transaction log analyser
 ├── cost_estimator.py         # F-05: DBU cost estimation + badge renderer
 ├── cross_query_optimiser.py  # F-06: multi-query batch analysis
-├── history_tracker.py        # F-09: query signature tracking + regression
+├── history_tracker.py         # F-09: query signature tracking + regression
 └── system_info.py             # SparkConf / AQE config helpers
 ```
 
@@ -190,4 +193,3 @@ All features, implementation details, and the priority matrix are documented in 
 **Edd Almond** — [eddalmond/spark-query-analyzer](https://github.com/eddalmond/spark-query-analyzer)
 
 [roadmap]: https://github.com/eddalmond/spark-query-analyzer/blob/master/spark-query-analyzer-roadmap.md
-[spark-query-analyzer-roadmap.md]: https://github.com/eddalmond/spark-query-analyzer/blob/master/spark-query-analyzer-roadmap.md

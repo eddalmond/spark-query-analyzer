@@ -9,6 +9,15 @@ authors = [{name = "Edd Almond", email = "edd@eddalmond.com"}]
 keywords = ["spark", "databricks", "performance", "sql", "notebook"]
 classifiers = ["License :: OSI Approved :: MIT License"]
 
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "mypy>=1.10.0",
+    "pytest>=8.3.0",
+    "pytest-mock>=3.14.0",
+    "pyspark>=3.5.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/eddalmond/spark-query-analyzer"
 Repository = "https://github.com/eddalmond/spark-query-analyzer"
@@ -17,11 +26,22 @@ Issues = "https://github.com/eddalmond/spark-query-analyzer/issues"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
-ignore = ["E501"]  # line too long — handled by formatter
 
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]  # unused imports OK in __init__
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "single"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

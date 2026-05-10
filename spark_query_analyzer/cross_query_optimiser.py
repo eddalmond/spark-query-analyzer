@@ -15,9 +15,8 @@ Usage:
     SELECT * FROM dim_product WHERE category = 'Ceramics';
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
 import re
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -34,10 +33,10 @@ class BatchFinding:
 class TableScan:
     table: str
     query_index: int  # 1-based
-    estimated_rows: Optional[int] = None
+    estimated_rows: int | None = None
     has_filter: bool = False
     filter_columns: list[str] = field(default_factory=list)
-    scan_node: str = ""
+    scan_node: str = ''
 
 
 @dataclass
@@ -52,25 +51,22 @@ class BatchAnalysisResult:
 def _split_queries(cell: str) -> list[str]:
     """Split cell on semicolons, strip, skip blanks."""
     queries = []
-    for chunk in cell.split(";"):
+    for chunk in cell.split(';'):
         stripped = chunk.strip()
         if stripped:
             # Remove -- comment lines
-            stripped = "\n".join(
-                line for line in stripped.split("\n")
-                if not line.strip().startswith("--")
-            )
+            stripped = '\n'.join(line for line in stripped.split('\n') if not line.strip().startswith('--'))
             queries.append(stripped)
     return queries
 
 
-def _extract_table_from_scan_line(line: str) -> Optional[str]:
+def _extract_table_from_scan_line(line: str) -> str | None:
     """Extract table name from a Scan node line."""
     # Format: "Scan ... table_name [...]" or "Project [...] +- Scan ... table_name"
-    m = re.search(r"Scan\s+(?:.*?\s+)?(\w+(?:\.\w+)?)", line, re.IGNORECASE)
+    m = re.search(r'Scan\s+(?:.*?\s+)?(\w+(?:\.\w+)?)', line, re.IGNORECASE)
     if m:
-        name = m.group(1).split(".")[-1]
-        if name.upper() not in ("none", "<unknown>", ""):
+        name = m.group(1).split('.')[-1]
+        if name.upper() not in ('none', '<unknown>', ''):
             return name
     return None
 
@@ -78,11 +74,11 @@ def _extract_table_from_scan_line(line: str) -> Optional[str]:
 def _extract_filter_columns(plan_text: str) -> list[str]:
     """Extract column names from Filter predicates in the plan."""
     cols = set()
-    for m in re.finditer(r"Filter\[(.*?)\]", plan_text, re.IGNORECASE):
+    for m in re.finditer(r'Filter\[(.*?)\]', plan_text, re.IGNORECASE):
         filter_expr = m.group(1)
         # Pull out column references (simple heuristic: bare identifiers)
-        for col in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", filter_expr):
-            if col.upper() not in ("AND", "OR", "NOT", "IS", "NULL", "TRUE", "FALSE", "IN", "LIKE"):
+        for col in re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', filter_expr):
+            if col.upper() not in ('AND', 'OR', 'NOT', 'IS', 'NULL', 'TRUE', 'FALSE', 'IN', 'LIKE'):
                 cols.add(col)
     return list(cols)
 
@@ -90,31 +86,28 @@ def _extract_filter_columns(plan_text: str) -> list[str]:
 def _run_explain(spark, sql: str) -> str:
     """Run EXPLAIN FORMATTED and return the plan text."""
     try:
-        explained = spark.sql(f"EXPLAIN FORMATTED {sql}")
-        return "\n".join(row[0] for row in explained.collect())
+        explained = spark.sql(f'EXPLAIN FORMATTED {sql}')
+        return '\n'.join(row[0] for row in explained.collect())
     except Exception:
-        return ""
+        return ''
 
 
-def _get_num_rows(plan_text: str) -> Optional[int]:
+def _get_num_rows(plan_text: str) -> int | None:
     """Extract num_rows from Scan nodes as a heuristic for data size."""
-    matches = re.findall(r"num_rows=(\d+)", plan_text, re.IGNORECASE)
+    matches = re.findall(r'num_rows=(\d+)', plan_text, re.IGNORECASE)
     return max(int(m) for m in matches) if matches else None
 
 
 def _extract_cte_definitions(sql: str) -> dict[str, str]:
     """Extract CTE definitions (WITH clause) from a SQL query."""
     ctes = {}
-    m = re.match(r"WITH\s+(.*)", sql, re.IGNORECASE | re.DOTALL)
+    m = re.match(r'WITH\s+(.*)', sql, re.IGNORECASE | re.DOTALL)
     if not m:
         return ctes
     body = m.group(1)
     # Split on non-WITH keywords that terminate CTE definitions
     # CTEs end before the final SELECT/INSERT/UPDATE/MERGE
-    cte_pattern = re.compile(
-        r"(\w+)\s+AS\s*\(\s*([\s\S]*?)\s*\)",
-        re.IGNORECASE
-    )
+    cte_pattern = re.compile(r'(\w+)\s+AS\s*\(\s*([\s\S]*?)\s*\)', re.IGNORECASE)
     for match in cte_pattern.finditer(body):
         name = match.group(1).strip()
         definition = match.group(2).strip()
@@ -129,7 +122,9 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
     """
     queries = _split_queries(cell)
     if not queries:
-        return BatchAnalysisResult(num_queries=0, findings=[], shared_scan_candidates=[], cte_candidates=[], cache_candidates=[])
+        return BatchAnalysisResult(
+            num_queries=0, findings=[], shared_scan_candidates=[], cte_candidates=[], cache_candidates=[]
+        )
 
     # Collect scans per query
     all_scans: list[TableScan] = []
@@ -141,7 +136,7 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
         all_plans.append(plan)
 
         # Find Scan nodes
-        scan_lines = [l.strip() for l in plan.split("\n") if "Scan" in l]
+        scan_lines = [ln.strip() for ln in plan.split('\n') if 'Scan' in ln]
         for line in scan_lines:
             table = _extract_table_from_scan_line(line)
             if table:
@@ -149,7 +144,7 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
                     table=table,
                     query_index=i,
                     estimated_rows=_get_num_rows(plan),
-                    has_filter=bool(re.search(r"Filter", line, re.IGNORECASE)),
+                    has_filter=bool(re.search(r'Filter', line, re.IGNORECASE)),
                     filter_columns=_extract_filter_columns(plan),
                     scan_node=line[:80],
                 )
@@ -159,6 +154,7 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
 
     # --- Shared Scan Detection ---
     from collections import defaultdict
+
     table_to_scans: dict[str, list[TableScan]] = defaultdict(list)
     for scan in all_scans:
         table_to_scans[scan.table].append(scan)
@@ -174,30 +170,34 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
 
             # Severity: high if large table scanned many times
             if avg_rows and avg_rows > 1_000_000 and scan_count >= 3:
-                severity = "high"
+                severity = 'high'
             elif scan_count >= 3:
-                severity = "medium"
+                severity = 'medium'
             else:
-                severity = "info"
+                severity = 'info'
 
-            findings.append(BatchFinding(
-                severity=severity,
-                code="SHARED_SCAN",
-                message=f"Table '{table}' is scanned {scan_count} times across this batch "
-                        f"(in queries: {', '.join(f'#{q}' for q in query_indices)}). "
-                        f"Estimated ~{avg_rows:,} rows per scan.",
-                suggestion=f"Materialise before the batch: `{table}_df = spark.table('{table}'); {table}_df.cache()` "
-                          f"or extract to a CTE: `WITH {table}_cte AS (SELECT * FROM {table}) SELECT * FROM {table}_cte` "
-                          f"used in each query.",
-                tables=[table],
-                queries=query_indices,
-            ))
-            shared_scan_candidates.append({
-                "table": table,
-                "scan_count": scan_count,
-                "query_indices": query_indices,
-                "estimated_rows": avg_rows,
-            })
+            findings.append(
+                BatchFinding(
+                    severity=severity,
+                    code='SHARED_SCAN',
+                    message=f"Table '{table}' is scanned {scan_count} times across this batch "
+                    f'(in queries: {", ".join(f"#{q}" for q in query_indices)}). '
+                    f'Estimated ~{avg_rows:,} rows per scan.',
+                    suggestion=f"Materialise before the batch: `{table}_df = spark.table('{table}'); {table}_df.cache()` "
+                    f'or extract to a CTE: `WITH {table}_cte AS (SELECT * FROM {table}) SELECT * FROM {table}_cte` '
+                    f'used in each query.',
+                    tables=[table],
+                    queries=query_indices,
+                )
+            )
+            shared_scan_candidates.append(
+                {
+                    'table': table,
+                    'scan_count': scan_count,
+                    'query_indices': query_indices,
+                    'estimated_rows': avg_rows,
+                }
+            )
 
     # --- Identical Filter Detection ---
     # Build a signature for each query's filter pattern per table
@@ -211,28 +211,33 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
     for table, sigs in filter_signatures.items():
         # Group queries by identical filter column set
         from collections import defaultdict as dd
+
         identical_groups: dict[frozenset, list[int]] = dd(list)
         for q_idx, sig in sigs:
             identical_groups[sig].append(q_idx)
 
         for sig, q_indices in identical_groups.items():
             if len(q_indices) >= 2:
-                findings.append(BatchFinding(
-                    severity="medium",
-                    code="IDENTICAL_FILTER",
-                    message=f"Queries {', '.join(f'#{q}' for q in q_indices)} apply identical filters on '{table}' "
-                            f"using columns: {set(sig)}.",
-                    suggestion=f"Extract the filtered table as a CTE: "
-                              f"`WITH {table}_filtered AS (SELECT * FROM {table} WHERE <filter>) SELECT * FROM {table}_filtered` "
-                              f"to avoid scanning '{table}' {len(q_indices)} times with the same predicate.",
-                    tables=[table],
-                    queries=q_indices,
-                ))
-                cte_candidates.append({
-                    "table": table,
-                    "filter_columns": list(sig),
-                    "query_indices": q_indices,
-                })
+                findings.append(
+                    BatchFinding(
+                        severity='medium',
+                        code='IDENTICAL_FILTER',
+                        message=f"Queries {', '.join(f'#{q}' for q in q_indices)} apply identical filters on '{table}' "
+                        f'using columns: {set(sig)}.',
+                        suggestion=f'Extract the filtered table as a CTE: '
+                        f'`WITH {table}_filtered AS (SELECT * FROM {table} WHERE <filter>) SELECT * FROM {table}_filtered` '
+                        f"to avoid scanning '{table}' {len(q_indices)} times with the same predicate.",
+                        tables=[table],
+                        queries=q_indices,
+                    )
+                )
+                cte_candidates.append(
+                    {
+                        'table': table,
+                        'filter_columns': list(sig),
+                        'query_indices': q_indices,
+                    }
+                )
 
     # --- Repeated CTE Detection ---
     all_cte_defs: dict[str, list[tuple[int, str]]] = defaultdict(list)
@@ -243,20 +248,22 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
     for cte_name, occurrences in all_cte_defs.items():
         if len(occurrences) > 1:
             # Check if definitions are identical
-            uniq_defs = list(set(d for _, d in occurrences))
+            uniq_defs = list({d for _, d in occurrences})
             if len(uniq_defs) == 1:
                 query_indices = [i for i, _ in occurrences]
-                findings.append(BatchFinding(
-                    severity="info",
-                    code="REPEATED_CTE",
-                    message=f"CTE '{cte_name}' is defined identically in {len(occurrences)} queries "
-                            f"(queries: {', '.join(f'#{q}' for q in query_indices)}).",
-                    suggestion=f"Move '{cte_name}' to a shared temp view at the top of the notebook: "
-                              f"`{cte_name}_view = spark.sql('''{uniq_defs[0]}'''); {cte_name}_view.createOrReplaceTempView('{cte_name}')` "
-                              f"and reference it directly in each query.",
-                    tables=[],
-                    queries=query_indices,
-                ))
+                findings.append(
+                    BatchFinding(
+                        severity='info',
+                        code='REPEATED_CTE',
+                        message=f"CTE '{cte_name}' is defined identically in {len(occurrences)} queries "
+                        f'(queries: {", ".join(f"#{q}" for q in query_indices)}).',
+                        suggestion=f"Move '{cte_name}' to a shared temp view at the top of the notebook: "
+                        f"`{cte_name}_view = spark.sql('''{uniq_defs[0]}'''); {cte_name}_view.createOrReplaceTempView('{cte_name}')` "
+                        f'and reference it directly in each query.',
+                        tables=[],
+                        queries=query_indices,
+                    )
+                )
 
     # --- Cache Candidates: high-row scans with no shared scan finding ---
     cache_candidates = []
@@ -264,11 +271,13 @@ def analyse_batch(spark, cell: str) -> BatchAnalysisResult:
         if len(scans) == 1:
             scan = scans[0]
             if scan.estimated_rows and scan.estimated_rows > 5_000_000:
-                cache_candidates.append({
-                    "table": table,
-                    "estimated_rows": scan.estimated_rows,
-                    "query_index": scan.query_index,
-                })
+                cache_candidates.append(
+                    {
+                        'table': table,
+                        'estimated_rows': scan.estimated_rows,
+                        'query_index': scan.query_index,
+                    }
+                )
 
     return BatchAnalysisResult(
         num_queries=len(queries),
@@ -297,18 +306,20 @@ def format_batch_diagnostics(result: BatchAnalysisResult) -> str:
         f'</div>'
     )
 
-    findings_html = ""
+    findings_html = ''
     for f in result.findings:
         border = {
-            "critical": "#dc2626",
-            "high": "#ea580c",
-            "medium": "#ca8a04",
-            "info": "#16a34a",
-        }.get(f.severity, "#ccc")
-        sym = {"critical": "&#x1F534;", "high": "&#x1F7E0;", "medium": "&#x1F7E1;", "info": "&#x2705;"}.get(f.severity, "&#x26AA;")
+            'critical': '#dc2626',
+            'high': '#ea580c',
+            'medium': '#ca8a04',
+            'info': '#16a34a',
+        }.get(f.severity, '#ccc')
+        sym = {'critical': '&#x1F534;', 'high': '&#x1F7E0;', 'medium': '&#x1F7E1;', 'info': '&#x2705;'}.get(
+            f.severity, '&#x26AA;'
+        )
         label = f.severity.upper()
-        queries_str = f"Queries: {', '.join(f'#{q}' for q in f.queries)}" if f.queries else ""
-        tables_str = f"Tables: {', '.join(f'`{t}`' for t in f.tables)}" if f.tables else ""
+        queries_str = f'Queries: {", ".join(f"#{q}" for q in f.queries)}' if f.queries else ''
+        tables_str = f'Tables: {", ".join(f"`{t}`" for t in f.tables)}' if f.tables else ''
 
         findings_html += (
             f'<div style="border-left:4px solid {border};padding:10px 14px;border-bottom:1px solid #f1f5f9;">'

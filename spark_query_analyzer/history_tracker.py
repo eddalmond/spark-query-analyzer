@@ -9,15 +9,13 @@ Opt-in: disabled by default. Enable via:
     spark.conf.set("spark_query_analyzer.history_path", "/path/to/history/delta")
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
 import hashlib
 import json
 import re
+from dataclasses import dataclass, field
 
-
-HISTORY_TABLE_NAME = "_spark_query_analyzer.query_history"
-HISTORY_DB = "_spark_query_analyzer"
+HISTORY_TABLE_NAME = '_spark_query_analyzer.query_history'
+HISTORY_DB = '_spark_query_analyzer'
 
 
 @dataclass
@@ -26,10 +24,10 @@ class HistoryEntry:
     run_timestamp: str
     query_text: str
     severity_counts: dict  # {"critical": 0, "high": 0, "medium": 0, "info": 0}
-    estimated_dbu_cost: Optional[float]
+    estimated_dbu_cost: float | None
     cluster_id: str
     findings_json: str
-    duration_ms: Optional[int]
+    duration_ms: int | None
     tables: list[str] = field(default_factory=list)
     codes: list[str] = field(default_factory=list)
 
@@ -45,36 +43,36 @@ def _normalise_sql(sql: str) -> str:
     produce the same signature.
     """
     # Remove block comments
-    sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
     # Remove line comments
-    sql = re.sub(r"--.*", "", sql)
+    sql = re.sub(r'--.*', '', sql)
     # Remove string literals (replace with _STR_)
-    sql = re.sub(r"'[^']*'", "_STR_", sql)
+    sql = re.sub(r"'[^']*'", '_STR_', sql)
     # Remove numeric literals
-    sql = re.sub(r"\b\d+\.\d+\b", "_NUM_", sql)
-    sql = re.sub(r"\b\d+\b", "_NUM_", sql)
+    sql = re.sub(r'\b\d+\.\d+\b', '_NUM_', sql)
+    sql = re.sub(r'\b\d+\b', '_NUM_', sql)
     # Normalise whitespace
-    sql = re.sub(r"\s+", " ", sql).strip()
+    sql = re.sub(r'\s+', ' ', sql).strip()
     return sql
 
 
 def _compute_signature(sql: str) -> str:
     """Compute a stable SHA-256 hash from the normalised SQL."""
     normalised = _normalise_sql(sql)
-    digest = hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(normalised.encode('utf-8')).hexdigest()[:16]
     return digest
 
 
 def _extract_tables_from_sql(sql: str) -> list[str]:
     """Extract table names from SQL query."""
     tables = set()
-    sql_clean = re.sub(r"--.*", "", sql)
-    sql_clean = re.sub(r"'[^']*'", "", sql_clean)
-    patterns = [r"(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)", r"(?:FROM|JOIN)\s+(\w+)"]
+    sql_clean = re.sub(r'--.*', '', sql)
+    sql_clean = re.sub(r"'[^']*'", '', sql_clean)
+    patterns = [r'(?:FROM|JOIN)\s+(\w+(?:\.\w+)?)', r'(?:FROM|JOIN)\s+(\w+)']
     for pattern in patterns:
         for match in re.finditer(pattern, sql_clean, re.IGNORECASE):
-            name = match.group(1).split(".")[-1]
-            if name.upper() not in ("SELECT", "WHERE", "AND", "OR", "ON", "AS", "TABLE"):
+            name = match.group(1).split('.')[-1]
+            if name.upper() not in ('SELECT', 'WHERE', 'AND', 'OR', 'ON', 'AS', 'TABLE'):
                 tables.add(name)
     return list(tables)[:20]  # cap at 20 tables
 
@@ -82,9 +80,9 @@ def _extract_tables_from_sql(sql: str) -> list[str]:
 def _history_table_exists(spark) -> bool:
     """Check if the history Delta table already exists."""
     try:
-        spark.sql(f"SHOW TABLES IN {HISTORY_DB}")
-        tables = [r.tableName() for r in spark.sql(f"SHOW TABLES IN {HISTORY_DB}").collect()]
-        return HISTORY_TABLE_NAME.split(".")[-1] in tables
+        spark.sql(f'SHOW TABLES IN {HISTORY_DB}')
+        tables = [r.tableName() for r in spark.sql(f'SHOW TABLES IN {HISTORY_DB}').collect()]
+        return HISTORY_TABLE_NAME.split('.')[-1] in tables
     except Exception:
         return False
 
@@ -117,7 +115,7 @@ def _ensure_history_table(spark, path: str) -> None:
 
 
 def _build_severity_counts(result) -> dict:
-    counts = {"critical": 0, "high": 0, "medium": 0, "info": 0}
+    counts = {'critical': 0, 'high': 0, 'medium': 0, 'info': 0}
     for f in result.findings:
         key = f.severity.lower()
         if key in counts:
@@ -129,15 +127,15 @@ def _get_cluster_id(spark) -> str:
     """Get a cluster identifier from SparkConf."""
     try:
         conf = spark.sparkContext.getConf()
-        cluster_id = conf.get("spark.databricks.clusterUsageTags.clusterId", "")
+        cluster_id = conf.get('spark.databricks.clusterUsageTags.clusterId', '')
         if not cluster_id:
-            cluster_id = conf.get("spark.databricks.clusterUsageTags.clusterName", "unknown")
+            cluster_id = conf.get('spark.databricks.clusterUsageTags.clusterName', 'unknown')
         return cluster_id
     except Exception:
-        return "unknown"
+        return 'unknown'
 
 
-def track_analysis_run(spark, result, sql: str, duration_ms: Optional[int] = None) -> Optional[str]:
+def track_analysis_run(spark, result, sql: str, duration_ms: int | None = None) -> str | None:
     """
     Write an analysis record to the history Delta table.
     Called at the end of run_analysis().
@@ -147,12 +145,12 @@ def track_analysis_run(spark, result, sql: str, duration_ms: Optional[int] = Non
         # Check opt-in flag
         try:
             conf = spark.sparkContext.getConf()
-            enabled = conf.get("spark_query_analyzer.history_enabled", "false").lower() == "true"
+            enabled = conf.get('spark_query_analyzer.history_enabled', 'false').lower() == 'true'
             if not enabled:
                 return None
             history_path = conf.get(
-                "spark_query_analyzer.history_path",
-                f"/tmp/{HISTORY_DB.replace('.', '/')}/query_history",
+                'spark_query_analyzer.history_path',
+                f'/tmp/{HISTORY_DB.replace(".", "/")}/query_history',
             )
         except Exception:
             return None
@@ -162,11 +160,13 @@ def track_analysis_run(spark, result, sql: str, duration_ms: Optional[int] = Non
         signature = _compute_signature(sql)
         counts = _build_severity_counts(result)
         tables = _extract_tables_from_sql(sql)
-        codes = list(set(f.code for f in result.findings))
-        findings_json = json.dumps([
-            {"code": f.code, "severity": f.severity, "message": f.message, "suggestion": f.suggestion}
-            for f in result.findings
-        ])
+        codes = list({f.code for f in result.findings})
+        findings_json = json.dumps(
+            [
+                {'code': f.code, 'severity': f.severity, 'message': f.message, 'suggestion': f.suggestion}
+                for f in result.findings
+            ]
+        )
 
         estimated_cost = None
         if result.cost_estimate:
@@ -174,7 +174,8 @@ def track_analysis_run(spark, result, sql: str, duration_ms: Optional[int] = Non
 
         cluster_id = _get_cluster_id(spark)
         from datetime import datetime, timezone
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
         insert_sql = f"""
         INSERT INTO {HISTORY_DB}.query_history VALUES (
@@ -203,17 +204,17 @@ def track_analysis_run(spark, result, sql: str, duration_ms: Optional[int] = Non
 def _render_ascii_sparkline(values: list[float], width: int = 20) -> str:
     """Render a simple ASCII sparkline from a list of values."""
     if not values:
-        return ""
+        return ''
 
     min_v, max_v = min(values), max(values)
     range_v = max_v - min_v
     if range_v == 0:
         range_v = 1.0
 
-    chars = "▁▂▃▅▇"
+    chars = '▁▂▃▅▇'
     n_chars = len(chars)
 
-    result = ""
+    result = ''
     for v in values:
         normalised = (v - min_v) / range_v
         idx = min(int(normalised * (n_chars - 1)), n_chars - 1)
@@ -225,7 +226,7 @@ def _render_ascii_sparkline(values: list[float], width: int = 20) -> str:
 def _render_html_sparkline(values: list[float], width: int = 120, height: int = 24) -> str:
     """Render an HTML inline sparkline using SVG."""
     if not values or len(values) < 2:
-        return ""
+        return ''
 
     min_v, max_v = min(values), max(values)
     range_v = max_v - min_v
@@ -239,11 +240,11 @@ def _render_html_sparkline(values: list[float], width: int = 120, height: int = 
     for i, v in enumerate(values):
         x = i * step
         y = height - ((v - min_v) / range_v * height)
-        points.append(f"{x:.1f},{y:.1f}")
+        points.append(f'{x:.1f},{y:.1f}')
 
-    polyline_points = " ".join(points)
-    min_label = f"{min_v:.4f}" if min_v < 1 else f"{min_v:.2f}"
-    max_label = f"{max_v:.4f}" if max_v < 1 else f"{max_v:.2f}"
+    polyline_points = ' '.join(points)
+    min_label = f'{min_v:.4f}' if min_v < 1 else f'{min_v:.2f}'
+    max_label = f'{max_v:.4f}' if max_v < 1 else f'{max_v:.2f}'
 
     svg = (
         f'<svg width="{width}" height="{height + 8}" viewBox="0 0 {width} {height + 8}" '
@@ -287,7 +288,7 @@ def get_history_for_table(spark, table: str, limit: int = 30) -> list[dict]:
         return []
 
 
-def format_history_trends(spark, signature: str, table: Optional[str] = None) -> str:
+def format_history_trends(spark, signature: str, table: str | None = None) -> str:
     """
     Render a history trends HTML card.
     Shows sparklines for severity counts and estimated cost over time.
@@ -308,10 +309,10 @@ def format_history_trends(spark, signature: str, table: Optional[str] = None) ->
     # Build time-series from oldest to newest (for sparkline direction)
     chronological = list(reversed(entries))
 
-    critical_trend = [float(r.get("severity_critical", 0) or 0) for r in chronological]
-    high_trend = [float(r.get("severity_high", 0) or 0) for r in chronological]
-    medium_trend = [float(r.get("severity_medium", 0) or 0) for r in chronological]
-    cost_trend = [float(r.get("estimated_dbu_cost", 0) or 0) for r in chronological]
+    critical_trend = [float(r.get('severity_critical', 0) or 0) for r in chronological]
+    high_trend = [float(r.get('severity_high', 0) or 0) for r in chronological]
+    medium_trend = [float(r.get('severity_medium', 0) or 0) for r in chronological]
+    cost_trend = [float(r.get('estimated_dbu_cost', 0) or 0) for r in chronological]
 
     # ASCII sparklines
     crit_spark = _render_ascii_sparkline(critical_trend)
@@ -319,24 +320,24 @@ def format_history_trends(spark, signature: str, table: Optional[str] = None) ->
     med_spark = _render_ascii_sparkline(medium_trend)
     cost_spark = _render_ascii_sparkline(cost_trend)
 
-    timestamps = [str(r.get("run_timestamp", "")[:16]) for r in chronological]
+    timestamps = [str(r.get('run_timestamp', '')[:16]) for r in chronological]
 
     # Format each row
-    rows_html = ""
-    for r, ts in zip(chronological, timestamps):
-        run_link = f"#{len(chronological) - (chronological.index(r))}"
+    rows_html = ''
+    for r, ts in zip(chronological, timestamps, strict=False):
+        f'#{len(chronological) - (chronological.index(r))}'
         severity_parts = []
-        for sev, label in [("critical", "🔴"), ("high", "🟠"), ("medium", "🟡"), ("info", "🟢")]:
-            n = r.get(f"severity_{sev}", 0) or 0
+        for sev, label in [('critical', '🔴'), ('high', '🟠'), ('medium', '🟡'), ('info', '🟢')]:
+            n = r.get(f'severity_{sev}', 0) or 0
             if n:
-                severity_parts.append(f"{label}{n}")
-        sev_display = " · ".join(severity_parts) or "✅ none"
+                severity_parts.append(f'{label}{n}')
+        sev_display = ' · '.join(severity_parts) or '✅ none'
 
-        cost_val = r.get("estimated_dbu_cost")
-        cost_display = f"${cost_val:.4f}" if cost_val else "—"
+        cost_val = r.get('estimated_dbu_cost')
+        cost_display = f'${cost_val:.4f}' if cost_val else '—'
 
-        duration_val = r.get("duration_ms")
-        dur_display = f"{duration_val}ms" if duration_val else "—"
+        duration_val = r.get('duration_ms')
+        dur_display = f'{duration_val}ms' if duration_val else '—'
 
         rows_html += (
             f'<tr style="border-bottom:1px solid #f1f5f9;font-size:12px;">'
@@ -349,9 +350,9 @@ def format_history_trends(spark, signature: str, table: Optional[str] = None) ->
 
     # Latest summary
     latest = entries[0]
-    latest_critical = latest.get("severity_critical", 0) or 0
-    latest_high = latest.get("severity_high", 0) or 0
-    latest_cost = latest.get("estimated_dbu_cost")
+    latest.get('severity_critical', 0) or 0
+    latest.get('severity_high', 0) or 0
+    latest.get('estimated_dbu_cost')
 
     header = (
         f'<div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;'

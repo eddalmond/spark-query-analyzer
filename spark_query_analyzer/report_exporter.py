@@ -10,6 +10,7 @@ Usage:
 """
 
 import datetime
+import html
 import uuid
 
 
@@ -198,7 +199,7 @@ def build_export_html(
 
 <div class="query-box">
   <div class="query-label">Analysed Query</div>
-{query}
+{html.escape(query)}
 </div>
 
 <div class="severity-summary">

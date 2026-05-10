@@ -187,30 +187,56 @@ def _get_stage_metrics(spark) -> dict:
     metrics = {}
     try:
         ui_url = _get_spark_ui_url(spark)
-        if not ui_url or '4040' not in ui_url:
+        if not ui_url:
             return {}
 
-        ui_url.split('/proxy/')[-1] if '/proxy/' in ui_url else ui_url
-        api_base = 'http://localhost:4040/api'
+        # Derive the API base from the UI URL (handles proxy and direct ports)
+        if '/proxy/' in ui_url:
+            # Databricks proxied format: https://<workspace>/proxy/<port>/
+            proxy_port = ui_url.split('/proxy/')[-1].rstrip('/')
+            api_base = f'http://localhost:{proxy_port}/api'
+        else:
+            # Direct Spark UI URL: http://<host>:4040
+            api_base = f'{ui_url}/api'
 
-        # Get list of stages, find the most recent completed one
-        req = urllib.request.Request(f'{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages')
+        app_id = spark.sparkContext.applicationId
+
+        # Get list of stages, find the most recent completed one filtered by job group
+        req = urllib.request.Request(f'{api_base}/v1/applications/{app_id}/stages')
         with urllib.request.urlopen(req, timeout=3) as resp:
             stages = json.loads(resp.read())
 
-        completed = [s for s in stages if s.get('status') == 'COMPLETED']
-        if not completed:
-            return {}
-        latest = max(completed, key=lambda s: s.get('submissionTime', ''))
+        # Get the job group ID to filter stages
+        # Stages belong to jobs; we want stages from our job group
+        jobs_req = urllib.request.Request(f'{api_base}/v1/applications/{app_id}/jobs')
+        with urllib.request.urlopen(jobs_req, timeout=3) as resp:
+            jobs = json.loads(resp.read())
+
+        # Find our job group
+        our_jobs = [j for j in jobs if j.get('name', '').startswith('spark-query-analyzer monitor:')]
+        if not our_jobs:
+            # Fallback: most recent completed stage if no job group match
+            completed = [s for s in stages if s.get('status') == 'COMPLETED']
+            if not completed:
+                return {}
+            latest = max(completed, key=lambda s: s.get('submissionTime', ''))
+        else:
+            # Get stages for our job group
+            our_job_ids = {j['jobId'] for j in our_jobs}
+            our_stages = [s for s in stages if s.get('status') == 'COMPLETED' and s.get('jobId') in our_job_ids]
+            if not our_stages:
+                return {}
+            latest = max(our_stages, key=lambda s: s.get('submissionTime', ''))
 
         stage_id = latest['stageId']
         metrics['stage_id'] = stage_id
         metrics['stage_name'] = latest.get('name', f'Stage {stage_id}')
         metrics['attempt_id'] = latest.get('attemptId', 0)
+        metrics['job_id'] = latest.get('jobId')
 
         # Get task-level summary for this stage
         req2 = urllib.request.Request(
-            f'{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages/{stage_id}/{metrics["attempt_id"]}/taskSummary'
+            f'{api_base}/v1/applications/{app_id}/stages/{stage_id}/{metrics["attempt_id"]}/taskSummary'
         )
         with urllib.request.urlopen(req2, timeout=3) as resp2:
             summary = json.loads(resp2.read())
@@ -503,9 +529,17 @@ def monitor_performance(
             # ── Get previous run for regression ──────────────────────────────────
             prev_run = _get_previous_run(_spark, job_name) if do_record else None
 
+            # ── Set job group for accurate stage attribution ────────────────────────
+            job_group_description = f'spark-query-analyzer monitor: {job_name}'
+            _spark.sparkContext.setJobGroup(job_name, job_group_description, interruptOnCancel=False)
+
             # ── Execute ───────────────────────────────────────────────────────────
             start = time.perf_counter()
-            result = fn(*args, **kwargs)
+            try:
+                result = fn(*args, **kwargs)
+            finally:
+                _spark.sparkContext.clearJobGroup()
+
             duration_ms = int((time.perf_counter() - start) * 1000)
 
             mon_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')

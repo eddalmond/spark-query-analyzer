@@ -43,9 +43,17 @@ class AnalysisResult:
 
 
 def run_analysis(
-    spark, sql: str, line: str = '', full_cell: str = '', dry_run: bool = True, export_path: str = ''
+    spark,
+    sql: str,
+    line: str = '',
+    full_cell: str = '',
+    dry_run: bool = True,
+    export_path: str = '',
+    no_record: bool = False,
 ) -> str:
     """Run EXPLAIN FORMATTED on the query, parse the plan, return HTML diagnostics."""
+    _warn_if_untested_dbr(spark)
+
     # Run EXPLAIN FORMATTED
     try:
         explained = spark.sql(f'EXPLAIN FORMATTED {sql}')
@@ -217,14 +225,15 @@ def run_analysis(
     # --- F-09: History Tracking ---
     history_html = ''
     signature = None
-    try:
-        from spark_query_analyzer.history_tracker import format_history_trends, track_analysis_run
+    if not no_record:
+        try:
+            from spark_query_analyzer.history_tracker import format_history_trends, track_analysis_run
 
-        signature = track_analysis_run(spark, result, sql)
-        if signature:
-            history_html = format_history_trends(spark, signature)
-    except Exception:
-        pass  # history tracking is best-effort
+            signature = track_analysis_run(spark, result, sql)
+            if signature:
+                history_html = format_history_trends(spark, signature)
+        except Exception:
+            pass  # history tracking is best-effort
 
     # --- F-10: Natural Language Explainer ---
     explainer = NarrativeExplainer(findings=result.findings, plan_text=plan_text, query=sql)
@@ -499,3 +508,34 @@ def _detect_exploding_joins(plan_text: str, lines: list[str]) -> list[Finding]:
                         )
                     )
     return findings
+
+
+# ── DBR version compatibility ─────────────────────────────────────────────
+_TESTED_DBR = ('11.', '12.', '13.', '14.')
+_DBR_WARNED = False
+
+
+def _warn_if_untested_dbr(spark) -> None:
+    """Print a runtime warning if running on an untested DBR version."""
+    global _DBR_WARNED
+    if _DBR_WARNED:
+        return
+    try:
+        version = spark.conf.get('spark.databricks.clusterUsageTags.sparkVersion', '')
+    except Exception:
+        return
+    if version and not any(version.startswith(v) for v in _TESTED_DBR):
+        import warnings
+
+        warnings.warn(
+            f'[spark-query-analyzer] Running on untested runtime {version}. '
+            'Results may be inaccurate. Tested: DBR 11–14.',
+            stacklevel=2,
+        )
+    _DBR_WARNED = True
+
+
+if __name__ == '__main__':
+    import doctest
+
+    doctest.testmod(verbose=False)

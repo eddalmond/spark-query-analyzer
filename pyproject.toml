@@ -45,3 +45,8 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spark_query_analyzer*"]
+exclude = ["notebooks*", "tests*"]

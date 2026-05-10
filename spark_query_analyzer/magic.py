@@ -6,9 +6,18 @@ from IPython.core.magic import register_cell_magic
 
 from spark_query_analyzer.analyzer import run_analysis
 
+_ALREADY_REGISTERED = False
+
 
 def register_analyze_magic():
-    """Call once per notebook session to register the %analyze magic."""
+    """Call once per notebook session to register the %analyze magic.
+
+    Safe to call multiple times — re-registration is blocked.
+    """
+    global _ALREADY_REGISTERED
+
+    if _ALREADY_REGISTERED:
+        return
 
     @register_cell_magic
     def analyze(line, cell):
@@ -17,17 +26,29 @@ def register_analyze_magic():
         Flags:
           --dry-run           : analyse plan only, no query execution (default)
           --execute          : execute query and include post-execution skew analysis (F-03)
-          --export <path>     : export full HTML report to DBFS/mounted path (F-14)
+          --export <path>    : export full HTML report to DBFS/mounted path (F-14)
+          --no-record        : do not write to query history (F-09)
         """
         spark = _get_spark()
         if spark is None:
-            raise RuntimeError(
-                'Could not acquire SparkSession. Make sure this notebook is attached to a cluster with Spark >= 3.3.'
+            from IPython.display import HTML, display
+
+            from spark_query_analyzer.display_utils import error_card
+
+            display(
+                HTML(
+                    error_card(
+                        'No SparkSession found. Make sure this notebook is attached to a cluster with Spark >= 3.3.',
+                        sql=cell.strip(),
+                    )
+                )
             )
+            return
 
         # Parse flags
         dry_run = True
         export_path = ''
+        no_record = False
         line_stripped = line.strip()
         if line_stripped:
             tokens = line_stripped.split()
@@ -41,9 +62,26 @@ def register_analyze_magic():
                 elif token == '--export' and i + 1 < len(tokens):
                     export_path = tokens[i + 1]
                     i += 1
+                elif token == '--no-record':
+                    no_record = True
                 i += 1
 
-        return run_analysis(spark, cell.strip(), line.strip(), full_cell=cell, dry_run=dry_run, export_path=export_path)
+        try:
+            return run_analysis(
+                spark,
+                cell.strip(),
+                line.strip(),
+                full_cell=cell,
+                dry_run=dry_run,
+                export_path=export_path,
+                no_record=no_record,
+            )
+        except Exception as e:
+            from IPython.display import HTML, display
+
+            from spark_query_analyzer.display_utils import error_card
+
+            display(HTML(error_card(str(e), sql=cell.strip())))
 
 
 def _get_spark():

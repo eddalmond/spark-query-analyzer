@@ -11,26 +11,23 @@ Usage:
 
 import datetime
 import uuid
-from typing import Optional
 
 
 def build_export_html(
     report_html: str,
     query: str,
     severity_counts: dict,
-    narrative_banner: str = "",
+    narrative_banner: str = '',
 ) -> str:
     """
     Wrap the diagnostic HTML in a full self-contained HTML document
     with report header, metadata, and a collapsible EXPLAIN section.
     """
-    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     report_id = str(uuid.uuid4())[:8]
 
     total_findings = sum(severity_counts.values())
-    counts_str = " | ".join(
-        f"{s.upper()}: {n}" for s, n in severity_counts.items() if n > 0
-    )
+    counts_str = ' | '.join(f'{s.upper()}: {n}' for s, n in severity_counts.items() if n > 0)
 
     export_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -205,16 +202,18 @@ def build_export_html(
 </div>
 
 <div class="severity-summary">
-  {"".join(
-      f'<span class="sev-chip sev-{sev}">{sym} {count} {sev.upper()}</span>'
-      for sev, sym, count in [
-          ("critical", "\\u274C", severity_counts.get("critical", 0)),
-          ("high", "\\u{1F7E0}", severity_counts.get("high", 0)),
-          ("medium", "\\u{1F7E1}", severity_counts.get("medium", 0)),
-          ("info", "\\u2705", severity_counts.get("info", 0)),
-      ]
-      if count > 0
-  )}
+  {
+        ''.join(
+            f'<span class="sev-chip sev-{sev}">{sym} {count} {sev.upper()}</span>'
+            for sev, sym, count in [
+                ('critical', '❌', severity_counts.get('critical', 0)),
+                ('high', '🟠', severity_counts.get('high', 0)),
+                ('medium', '🟡', severity_counts.get('medium', 0)),
+                ('info', '✅', severity_counts.get('info', 0)),
+            ]
+            if count > 0
+        )
+    }
 </div>
 
 <div class="report-card">
@@ -245,8 +244,8 @@ def export_report(
     query: str,
     plan_text: str,
     severity_counts: dict,
-    narrative_banner: str = "",
-    export_path: str = "/dbfs/reports/spark_analyzer_report.html",
+    narrative_banner: str = '',
+    export_path: str = '/dbfs/reports/spark_analyzer_report.html',
 ) -> str:
     """
     Write the full HTML report to the specified path.
@@ -259,18 +258,18 @@ def export_report(
     Returns the path the file was written to.
     """
     if not export_path:
-        raise ValueError("export_path must be specified")
+        raise ValueError('export_path must be specified')
 
     # Normalise DBFS path for dbutils
     dbfs_path = export_path
-    if dbfs_path.startswith("/dbfs/"):
+    if dbfs_path.startswith('/dbfs/'):
         dbfs_path = dbfs_path[5:]  # strip /dbfs prefix for dbutils
 
     full_html = build_export_html(report_html, query, severity_counts, narrative_banner)
 
     # Inject plan text into the explain toggle
     if plan_text:
-        escaped_plan = plan_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        escaped_plan = plan_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         full_html = full_html.replace(
             'id="explain-output">\n    (Injected',
             f'id="explain-output">\n{escaped_plan}\n    (Injected',
@@ -279,27 +278,29 @@ def export_report(
     try:
         # Try Databricks dbutils first
         import dbutils
+
         dbutils.fs.put(dbfs_path, full_html, overwrite=True)
         return export_path
     except (ImportError, NameError):
         pass
 
     # Try Python file I/O (local / Docker)
-    if export_path.startswith("file://"):
+    if export_path.startswith('file://'):
         local_path = export_path[7:]
-    elif export_path.startswith("/"):
+    elif export_path.startswith('/'):
         local_path = export_path
     else:
         local_path = export_path
 
     try:
         import os
+
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        with open(local_path, "w", encoding="utf-8") as f:
+        with open(local_path, 'w', encoding='utf-8') as f:
             f.write(full_html)
         return export_path
     except OSError as e:
         raise RuntimeError(
             f"Could not write to export path '{export_path}'. "
-            f"Ensure the path is writable or use a DBFS/mnt path on Databricks. Error: {e}"
-        )
+            f'Ensure the path is writable or use a DBFS/mnt path on Databricks. Error: {e}'
+        ) from e

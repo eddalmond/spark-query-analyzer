@@ -27,73 +27,75 @@ Requires:
 (Or accept the defaults — it falls back to /tmp/_spark_query_analyzer/query_history)
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from functools import wraps
-from typing import Callable, Optional, Any
 import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import wraps
+from typing import Any
 
 # ── Internal helpers (mirror of history_tracker.py) ────────────────────────
 
-HISTORY_DB = "_spark_query_analyzer"
-HISTORY_TABLE = f"{HISTORY_DB}.query_history"
+HISTORY_DB = '_spark_query_analyzer'
+HISTORY_TABLE = f'{HISTORY_DB}.query_history'
 
-SQL_NORMALISATION_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-COMMENT_RE = re.compile(r"--.*")
+SQL_NORMALISATION_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
+COMMENT_RE = re.compile(r'--.*')
 STRING_RE = re.compile(r"'[^']*'")
 
 
 def _normalise_sql(sql: str) -> str:
     """Normalise SQL for signature: strip comments/literals, collapse whitespace."""
-    sql = SQL_NORMALISATION_RE.sub("", sql)
-    sql = COMMENT_RE.sub("", sql)
-    sql = STRING_RE.sub("_STR_", sql)
-    sql = re.sub(r"\b\d+\.\d+\b", "_NUM_", sql)
-    sql = re.sub(r"\b\d+\b", "_NUM_", sql)
-    sql = re.sub(r"\s+", " ", sql).strip()
+    sql = SQL_NORMALISATION_RE.sub('', sql)
+    sql = COMMENT_RE.sub('', sql)
+    sql = STRING_RE.sub('_STR_', sql)
+    sql = re.sub(r'\b\d+\.\d+\b', '_NUM_', sql)
+    sql = re.sub(r'\b\d+\b', '_NUM_', sql)
+    sql = re.sub(r'\s+', ' ', sql).strip()
     return sql
 
 
 def _compute_signature(text: str) -> str:
     """Stable SHA-256 hash (first 16 chars) of normalised text."""
-    digest = hashlib.sha256(_normalise_sql(text).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(_normalise_sql(text).encode('utf-8')).hexdigest()
     return digest[:16]
 
 
 def _get_cluster_id(spark) -> str:
     try:
         conf = spark.sparkContext.getConf()
-        return conf.get("spark.databricks.clusterUsageTags.clusterId", "unknown")
+        return conf.get('spark.databricks.clusterUsageTags.clusterId', 'unknown')
     except Exception:
-        return "unknown"
+        return 'unknown'
 
 
 def _get_compute_tier(spark) -> str:
     try:
         conf = spark.sparkContext.getConf()
         tags = {
-            conf.get(k, "")
+            conf.get(k, '')
             for k in (
-                "spark.databricks.clusterUsageTags.clusterId",
-                "spark.databricks.clusterUsageTags.orgId",
-                "spark.databricks.clusterUsageTags.clusterName",
+                'spark.databricks.clusterUsageTags.clusterId',
+                'spark.databricks.clusterUsageTags.orgId',
+                'spark.databricks.clusterUsageTags.clusterName',
             )
         }
         tags = {t for t in tags if t}
-        if "photon" in " ".join(tags).lower():
-            return "photon"
+        if 'photon' in ' '.join(tags).lower():
+            return 'photon'
         for t in tags:
-            if t.startswith("job"):
-                return "jobs_compute"
-        return "all_purpose_compute"
+            if t.startswith('job'):
+                return 'jobs_compute'
+        return 'all_purpose_compute'
     except Exception:
-        return "unknown"
+        return 'unknown'
 
 
 # ── Dataclasses for the monitor ──────────────────────────────────────────────
+
 
 @dataclass
 class MonitorResult:
@@ -102,17 +104,17 @@ class MonitorResult:
     job_name: str
     run_timestamp: str
     duration_ms: int
-    estimated_cost_usd: Optional[float]
+    estimated_cost_usd: float | None
     estimated_dbu_hours: float
     cluster_id: str
     signature: str
     tables: list[str]
     finding_codes: list[str]
     severity_counts: dict
-    spark_ui_url: Optional[str] = None
-    spark_ui_stage_link: Optional[str] = None
-    regression_vs_ms: Optional[int] = None  # positive = slower than last run
-    regression_vs_cost: Optional[float] = None  # positive = costlier
+    spark_ui_url: str | None = None
+    spark_ui_stage_link: str | None = None
+    regression_vs_ms: int | None = None  # positive = slower than last run
+    regression_vs_cost: float | None = None  # positive = costlier
     is_first_run: bool = False
 
 
@@ -131,13 +133,13 @@ class RunResult:
 # ── Cost estimation ───────────────────────────────────────────────────────────
 
 DBU_RATES = {
-    "jobs_compute": 0.10,
-    "all_purpose_compute": 0.55,
-    "sql_warehouse_serverless": 0.22,
-    "photon_jobs": 0.30,
-    "photon_all_purpose": 0.42,
-    "ml_runtime": 0.70,
-    "unknown": 0.40,
+    'jobs_compute': 0.10,
+    'all_purpose_compute': 0.55,
+    'sql_warehouse_serverless': 0.22,
+    'photon_jobs': 0.30,
+    'photon_all_purpose': 0.42,
+    'ml_runtime': 0.70,
+    'unknown': 0.40,
 }
 
 
@@ -147,7 +149,7 @@ def _estimate_dbu_cost(duration_ms: int, spark, finding_count: int = 0) -> tuple
     Returns (estimated_cost_usd, estimated_dbu_hours).
     """
     tier = _get_compute_tier(spark)
-    rate = DBU_RATES.get(tier, DBU_RATES["unknown"])
+    rate = DBU_RATES.get(tier, DBU_RATES['unknown'])
     hours = duration_ms / 3_600_000
     dbu_hours = hours * rate
     cost = dbu_hours
@@ -161,14 +163,14 @@ def _estimate_dbu_cost(duration_ms: int, spark, finding_count: int = 0) -> tuple
 
 # ── Spark UI helpers ────────────────────────────────────────────────────────────
 
-def _get_spark_ui_url(spark) -> Optional[str]:
+
+def _get_spark_ui_url(spark) -> str | None:
     """Get the Spark UI URL from the active Spark context."""
     try:
         sc = spark.sparkContext
-        app_id = sc.applicationId
         web_url = sc.uiWebUrl
-        if web_url and "4040" not in web_url:
-            return web_url.rstrip("/")
+        if web_url and '4040' not in web_url:
+            return web_url.rstrip('/')
         return None
     except Exception:
         return None
@@ -185,43 +187,43 @@ def _get_stage_metrics(spark) -> dict:
     metrics = {}
     try:
         ui_url = _get_spark_ui_url(spark)
-        if not ui_url or "4040" not in ui_url:
+        if not ui_url or '4040' not in ui_url:
             return {}
 
-        base = ui_url.split("/proxy/")[-1] if "/proxy/" in ui_url else ui_url
-        api_base = f"http://localhost:4040/api"
+        ui_url.split('/proxy/')[-1] if '/proxy/' in ui_url else ui_url
+        api_base = 'http://localhost:4040/api'
 
         # Get list of stages, find the most recent completed one
-        req = urllib.request.Request(f"{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages")
+        req = urllib.request.Request(f'{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages')
         with urllib.request.urlopen(req, timeout=3) as resp:
             stages = json.loads(resp.read())
 
-        completed = [s for s in stages if s.get("status") == "COMPLETED"]
+        completed = [s for s in stages if s.get('status') == 'COMPLETED']
         if not completed:
             return {}
-        latest = max(completed, key=lambda s: s.get("submissionTime", ""))
+        latest = max(completed, key=lambda s: s.get('submissionTime', ''))
 
-        stage_id = latest["stageId"]
-        metrics["stage_id"] = stage_id
-        metrics["stage_name"] = latest.get("name", f"Stage {stage_id}")
-        metrics["attempt_id"] = latest.get("attemptId", 0)
+        stage_id = latest['stageId']
+        metrics['stage_id'] = stage_id
+        metrics['stage_name'] = latest.get('name', f'Stage {stage_id}')
+        metrics['attempt_id'] = latest.get('attemptId', 0)
 
         # Get task-level summary for this stage
         req2 = urllib.request.Request(
-            f"{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages/{stage_id}/{metrics['attempt_id']}/taskSummary"
+            f'{api_base}/v1/applications/{spark.sparkContext.applicationId}/stages/{stage_id}/{metrics["attempt_id"]}/taskSummary'
         )
         with urllib.request.urlopen(req2, timeout=3) as resp2:
             summary = json.loads(resp2.read())
 
-        metrics["num_tasks"] = latest.get("numberOfTasks", 0)
-        metrics["input_bytes"] = summary.get("inputBytes", 0)
-        metrics["output_bytes"] = summary.get("outputBytes", 0)
-        metrics["shuffle_read_bytes"] = summary.get("shuffleReadBytes", 0)
-        metrics["shuffle_write_bytes"] = summary.get("shuffleWriteBytes", 0)
-        metrics["duration_ms"] = summary.get("executorRunTime", 0)
-        metrics["gc_time_ms"] = summary.get("gcTime", 0)
-        metrics["max_task_duration_ms"] = summary.get("maxTaskDurationMs", 0)
-        metrics["median_task_duration_ms"] = summary.get("medianTaskDurationMs", 0)
+        metrics['num_tasks'] = latest.get('numberOfTasks', 0)
+        metrics['input_bytes'] = summary.get('inputBytes', 0)
+        metrics['output_bytes'] = summary.get('outputBytes', 0)
+        metrics['shuffle_read_bytes'] = summary.get('shuffleReadBytes', 0)
+        metrics['shuffle_write_bytes'] = summary.get('shuffleWriteBytes', 0)
+        metrics['duration_ms'] = summary.get('executorRunTime', 0)
+        metrics['gc_time_ms'] = summary.get('gcTime', 0)
+        metrics['max_task_duration_ms'] = summary.get('maxTaskDurationMs', 0)
+        metrics['median_task_duration_ms'] = summary.get('medianTaskDurationMs', 0)
         return metrics
 
     except Exception:
@@ -230,11 +232,12 @@ def _get_stage_metrics(spark) -> dict:
 
 # ── History table read/write ───────────────────────────────────────────────────
 
+
 def _history_table_exists(spark) -> bool:
     try:
-        rows = spark.sql(f"SHOW TABLES IN {HISTORY_DB}").collect()
+        rows = spark.sql(f'SHOW TABLES IN {HISTORY_DB}').collect()
         names = [r.tableName() for r in rows]
-        return "query_history" in names
+        return 'query_history' in names
     except Exception:
         return False
 
@@ -272,7 +275,7 @@ def _ensure_history_table(spark, path: str) -> None:
     """)
 
 
-def _get_previous_run(spark, job_name: str) -> Optional[dict]:
+def _get_previous_run(spark, job_name: str) -> dict | None:
     """Fetch the most recent history entry for this job_name."""
     try:
         rows = spark.sql(f"""
@@ -310,7 +313,7 @@ def _write_history_entry(
             {severity_counts.get('info', 0)},
             {mon.estimated_cost_usd or 'NULL'},
             '{mon.cluster_id}',
-            {repr(json.dumps([{"code": c} for c in finding_codes]))},
+            {repr(json.dumps([{'code': c} for c in finding_codes]))},
             {mon.duration_ms},
             {repr(json.dumps(mon.tables))},
             {repr(json.dumps(mon.finding_codes))},
@@ -330,19 +333,19 @@ def _write_history_entry(
 # ── HTML rendering ──────────────────────────────────────────────────────────────
 
 _SEVERITY_COLOUR = {
-    "critical": "#dc2626",
-    "high": "#ea580c",
-    "medium": "#ca8a04",
-    "info": "#16a34a",
+    'critical': '#dc2626',
+    'high': '#ea580c',
+    'medium': '#ca8a04',
+    'info': '#16a34a',
 }
 
 
 def _severity_chip(sev: str, count: int) -> str:
-    colour = _SEVERITY_COLOUR.get(sev.lower(), "#64748b")
+    colour = _SEVERITY_COLOUR.get(sev.lower(), '#64748b')
     label = sev.capitalize()
-    emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "info": "🟢"}.get(sev.lower(), "ℹ️")
+    emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'info': '🟢'}.get(sev.lower(), 'ℹ️')
     if count == 0:
-        return ""
+        return ''
     return f'<span style="background:{colour}18;color:{colour};border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;">{emoji} {count} {label}</span>'
 
 
@@ -354,54 +357,57 @@ def _render_inline_card(
 ) -> str:
     """Render the HTML card shown inline after a monitored call."""
 
-    chips = "  ".join(
-        c for c in (
-            _severity_chip("critical", severity_counts.get("critical", 0)),
-            _severity_chip("high", severity_counts.get("high", 0)),
-            _severity_chip("medium", severity_counts.get("medium", 0)),
+    chips = '  '.join(
+        c
+        for c in (
+            _severity_chip('critical', severity_counts.get('critical', 0)),
+            _severity_chip('high', severity_counts.get('high', 0)),
+            _severity_chip('medium', severity_counts.get('medium', 0)),
         )
         if c
     )
     if not chips:
         chips = '<span style="color:#16a34a;font-size:12px;">✅ No findings</span>'
 
-    cost_display = f"${mon.estimated_cost_usd:.4f}" if mon.estimated_cost_usd else "—"
+    cost_display = f'${mon.estimated_cost_usd:.4f}' if mon.estimated_cost_usd else '—'
 
     # Regression indicator
-    regress_note = ""
+    regress_note = ''
     if mon.regression_vs_ms is not None and mon.regression_vs_ms != 0:
-        sign = "+" if mon.regression_vs_ms > 0 else ""
-        emoji = "🐢" if mon.regression_vs_ms > 500 else "⏱️"
+        sign = '+' if mon.regression_vs_ms > 0 else ''
+        emoji = '🐢' if mon.regression_vs_ms > 500 else '⏱️'
         regress_note = (
             f'<span style="font-size:11px;color:#ea580c;margin-left:8px;">'
             f'{emoji} {sign}{mon.regression_vs_ms}ms vs last run</span>'
-           )
+        )
     elif mon.is_first_run:
-        regress_note = '<span style="font-size:11px;color:#64748b;margin-left:8px;">1st run — baseline not yet set</span>'
+        regress_note = (
+            '<span style="font-size:11px;color:#64748b;margin-left:8px;">1st run — baseline not yet set</span>'
+        )
 
     # Spark UI link
-    ui_links = ""
+    ui_links = ''
     if mon.spark_ui_url:
         ui_links += f'<a href="{mon.spark_ui_url}" target="_blank" style="margin-right:10px;">🔗 Spark UI</a>'
     if mon.spark_ui_stage_link:
-        ui_links += f'<a href="{mon.spark_ui_stage_link}" target="_blank" style="margin-right:10px;">🔗 View Stage {stage_metrics.get("stage_id","")}</a>'
+        ui_links += f'<a href="{mon.spark_ui_stage_link}" target="_blank" style="margin-right:10px;">🔗 View Stage {stage_metrics.get("stage_id", "")}</a>'
 
     # Stage metrics summary
-    stage_info = ""
+    stage_info = ''
     if stage_metrics:
-        tasks = stage_metrics.get("num_tasks", "?")
-        inp = stage_metrics.get("input_bytes", 0)
-        inp_display = f"{inp/1024**2:.1f}MB" if inp else "—"
-        max_dur = stage_metrics.get("max_task_duration_ms", 0)
-        max_display = f"{max_dur}ms" if max_dur else "—"
+        tasks = stage_metrics.get('num_tasks', '?')
+        inp = stage_metrics.get('input_bytes', 0)
+        inp_display = f'{inp / 1024**2:.1f}MB' if inp else '—'
+        max_dur = stage_metrics.get('max_task_duration_ms', 0)
+        max_display = f'{max_dur}ms' if max_dur else '—'
         stage_info = (
             f'<div style="font-size:11px;color:#64748b;margin-top:4px;">'
             f'Tasks:{tasks} · Input:{inp_display} · Max task:{max_display}'
             f'</div>'
         )
 
-    dur_display = f"{mon.duration_ms:,}ms"
-    timestamp = mon.run_timestamp.replace(" ", "T")[:19] + "Z"
+    dur_display = f'{mon.duration_ms:,}ms'
+    timestamp = mon.run_timestamp.replace(' ', 'T')[:19] + 'Z'
 
     return f"""
     <div style="
@@ -422,20 +428,21 @@ def _render_inline_card(
         </div>
         <div style="font-size:12px;color:#64748b;">{timestamp} · Cluster:{mon.cluster_id}</div>
         {stage_info}
-        {"<div style='margin-top:8px;'>" + ui_links + "</div>" if ui_links else ""}
+        {"<div style='margin-top:8px;'>" + ui_links + '</div>' if ui_links else ''}
     </div>
     """
 
 
 # ── Main decorator ─────────────────────────────────────────────────────────────
 
+
 def monitor_performance(
     job_name: str,
     spark=None,
-    enabled: Optional[bool] = None,
+    enabled: bool | None = None,
     record: bool = True,
     display_card: bool = True,
-    tags: Optional[dict] = None,
+    tags: dict | None = None,
 ):
     """
     Decorator that instruments a function with performance monitoring.
@@ -460,16 +467,17 @@ def monitor_performance(
 
         daily_agg()   # card appears inline, result returned
     """
+
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
             # ── Resolve spark session ────────────────────────────────────────────
             _spark = spark
             if _spark is None:
-                _spark = globals().get("spark")
+                _spark = globals().get('spark')
             if _spark is None:
                 raise RuntimeError(
-                    "monitor_performance: spark session not available. "
+                    'monitor_performance: spark session not available. '
                     "Pass spark=spark to the decorator or ensure 'spark' is in notebook globals."
                 )
 
@@ -478,7 +486,7 @@ def monitor_performance(
             if enabled is None:
                 try:
                     conf = _spark.sparkContext.getConf()
-                    do_record = conf.get("spark_query_analyzer.monitor_enabled", "true").lower() == "true"
+                    do_record = conf.get('spark_query_analyzer.monitor_enabled', 'true').lower() == 'true'
                 except Exception:
                     do_record = True  # default on if conf unreadable
 
@@ -486,11 +494,11 @@ def monitor_performance(
             try:
                 conf = _spark.sparkContext.getConf()
                 history_path = conf.get(
-                    "spark_query_analyzer.history_path",
-                    f"/tmp/{HISTORY_DB.replace('.', '/')}/query_history",
+                    'spark_query_analyzer.history_path',
+                    f'/tmp/{HISTORY_DB.replace(".", "/")}/query_history',
                 )
             except Exception:
-                history_path = f"/tmp/{HISTORY_DB.replace('.', '/')}/query_history"
+                history_path = f'/tmp/{HISTORY_DB.replace(".", "/")}/query_history'
 
             # ── Get previous run for regression ──────────────────────────────────
             prev_run = _get_previous_run(_spark, job_name) if do_record else None
@@ -500,7 +508,7 @@ def monitor_performance(
             result = fn(*args, **kwargs)
             duration_ms = int((time.perf_counter() - start) * 1000)
 
-            mon_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            mon_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 
             # ── Cost estimate ──────────────────────────────────────────────────────
             est_cost, est_dbu_hours = _estimate_dbu_cost(duration_ms, _spark)
@@ -520,7 +528,7 @@ def monitor_performance(
                 signature=_compute_signature(job_name),  # job_name is the signature key
                 tables=[],  # not easily available for arbitrary Python functions
                 finding_codes=[],  # filled below if analyzer result available
-                severity_counts={"critical": 0, "high": 0, "medium": 0, "info": 0},
+                severity_counts={'critical': 0, 'high': 0, 'medium': 0, 'info': 0},
                 spark_ui_url=spark_ui_url,
                 spark_ui_stage_link=None,
                 regression_vs_ms=None,
@@ -529,55 +537,56 @@ def monitor_performance(
             )
 
             if prev_run:
-                prev_dur = prev_run.get("duration_ms", 0) or 0
+                prev_dur = prev_run.get('duration_ms', 0) or 0
                 mon.regression_vs_ms = duration_ms - prev_dur
-                if prev_run.get("estimated_dbu_cost"):
-                    mon.regression_vs_cost = est_cost - float(prev_run["estimated_dbu_cost"])
+                if prev_run.get('estimated_dbu_cost'):
+                    mon.regression_vs_cost = est_cost - float(prev_run['estimated_dbu_cost'])
 
-            if spark_ui_url and stage_metrics.get("stage_id"):
-                stage_id = stage_metrics["stage_id"]
+            if spark_ui_url and stage_metrics.get('stage_id'):
+                stage_id = stage_metrics['stage_id']
                 # Try driver-proxy URL format
-                mon.spark_ui_stage_link = f"{spark_ui_url}/?o={_spark.sparkContext.applicationId}/spark_ui/{stage_id}"
+                mon.spark_ui_stage_link = f'{spark_ui_url}/?o={_spark.sparkContext.applicationId}/spark_ui/{stage_id}'
                 # Fallback to direct Spark UI stage URL
-                mon.spark_ui_stage_link = (
-                    f"{spark_ui_url}/#SparkStage/0/{stage_metrics['attempt_id']}/{stage_id}"
-                )
+                mon.spark_ui_stage_link = f'{spark_ui_url}/#SparkStage/0/{stage_metrics["attempt_id"]}/{stage_id}'
 
             # ── Auto-detect findings from result if it's an analyzer result ─────────
             finding_codes: list[str] = []
-            severity_counts = {"critical": 0, "high": 0, "medium": 0, "info": 0}
+            severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'info': 0}
             if display_card:
                 # Try to detect if the function returned an AnalysisResult-like object
-                if hasattr(result, "findings"):
+                if hasattr(result, 'findings'):
                     for f in result.findings:
-                        sev = f.severity.lower() if hasattr(f, "severity") else "info"
+                        sev = f.severity.lower() if hasattr(f, 'severity') else 'info'
                         if sev in severity_counts:
                             severity_counts[sev] += 1
-                        if hasattr(f, "code"):
+                        if hasattr(f, 'code'):
                             finding_codes.append(f.code)
 
             # ── Write to history table ────────────────────────────────────────────
             if do_record and record:
                 try:
                     _write_history_entry(
-                        _spark, mon,
-                        query_text=json.dumps({"tags": tags or {}, "job_name": job_name}),
+                        _spark,
+                        mon,
+                        query_text=json.dumps({'tags': tags or {}, 'job_name': job_name}),
                         path=history_path,
                         finding_codes=finding_codes,
                         severity_counts=severity_counts,
                         stage_metrics=stage_metrics,
                     )
-                except Exception as e:
+                except Exception:
                     # Never fail the wrapped function due to history write errors
                     pass
 
             # ── Display inline card ───────────────────────────────────────────────
             if display_card:
                 from IPython.display import HTML, display
+
                 display(HTML(_render_inline_card(mon, finding_codes, severity_counts, stage_metrics)))
                 return result
             else:
                 return RunResult(result=result, monitor=mon)
 
         return wrapper
+
     return decorator

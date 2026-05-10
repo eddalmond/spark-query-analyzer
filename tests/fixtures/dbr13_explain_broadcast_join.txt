@@ -1,0 +1,5 @@
+== Physical Plan ==
+* BroadcastHashJoin [id] (Batched)
++- Exchange (BroadcastCoordination)
+|  +- * Scan SparkCatalog events [event_id, user_id, event_type, timestamp]
++- * Scan SparkCatalog users [id, name, email]
